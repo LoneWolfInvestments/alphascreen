@@ -6,6 +6,8 @@ export default function VixDashboard() {
   const [vix, setVix] = useState("");
   const [ma, setMa] = useState("");
   const [saved, setSaved] = useState(null);
+  const [fetchingLive, setFetchingLive] = useState(false);
+  const [liveError, setLiveError] = useState(null);
 
   const load = useCallback(async () => {
     const { data } = await supabase.from("vix_snapshot").select("*").maybeSingle();
@@ -26,6 +28,38 @@ export default function VixDashboard() {
     setSaved({ vix: v, ma30: m });
   };
 
+  const fetchLive = async () => {
+    setFetchingLive(true);
+    setLiveError(null);
+    try {
+      const quoteRes = await fetch("/api/quote?symbol=VIX&endpoint=quote");
+      const quoteData = await quoteRes.json();
+      if (quoteData.error || quoteData.status === "error") {
+        throw new Error(quoteData.error || quoteData.message || "VIX not available on this plan");
+      }
+      const currentVix = parseFloat(quoteData.close);
+
+      const seriesRes = await fetch("/api/quote?symbol=VIX&endpoint=time_series&outputsize=30");
+      const seriesData = await seriesRes.json();
+      if (seriesData.error || seriesData.status === "error" || !seriesData.values) {
+        throw new Error(seriesData.error || seriesData.message || "VIX history not available on this plan");
+      }
+      const closes = seriesData.values.map((v) => parseFloat(v.close));
+      const avg30 = closes.reduce((a, b) => a + b, 0) / closes.length;
+
+      setVix(currentVix.toFixed(2));
+      setMa(avg30.toFixed(2));
+      await supabase.from("vix_snapshot").upsert({
+        id: true, vix: currentVix, ma30: avg30, updated_at: new Date().toISOString(),
+      });
+      setSaved({ vix: currentVix, ma30: avg30 });
+    } catch (err) {
+      setLiveError(err.message + " — your Twelve Data plan may not include index data. Manual entry below still works fine.");
+    } finally {
+      setFetchingLive(false);
+    }
+  };
+
   const deviation = saved ? ((saved.vix - saved.ma30) / saved.ma30) * 100 : null;
   let zone = "Neutral", zoneColor = "#f0b955";
   if (deviation != null) {
@@ -36,6 +70,14 @@ export default function VixDashboard() {
   return (
     <div className="panel">
       <h2>VIX Signal (JPMorgan 30-Day MA Deviation Framework)</h2>
+
+      <div style={{ marginBottom: 12 }}>
+        <button className="action secondary" onClick={fetchLive} disabled={fetchingLive}>
+          {fetchingLive ? "Fetching..." : "Fetch live VIX"}
+        </button>
+        {liveError && <div style={{ color: "#f0555a", fontSize: 12, marginTop: 8 }}>{liveError}</div>}
+      </div>
+
       <div className="add-form">
         <div className="field">
           <label>Current VIX</label>
@@ -60,13 +102,14 @@ export default function VixDashboard() {
           </div>
         </>
       )}
-      {!saved && <div className="empty">No VIX data yet — enter values above.</div>}
+      {!saved && <div className="empty">No VIX data yet — try "Fetch live VIX" or enter values manually above.</div>}
       <p className="disclaimer">
         Deviation = (VIX − 30d MA) ÷ 30d MA. Rough zones: above +20% = elevated fear (historically favors mean-reversion entries);
         below −20% = complacency (historically a caution zone). This mirrors the shape of JPMorgan's published framework —
-        treat exact thresholds as approximate, not house-calibrated. Twelve Data doesn't include VIX on the free tier
-        used here, so this stays manual entry.
+        treat exact thresholds as approximate, not house-calibrated. "Fetch live VIX" tries Twelve Data's index endpoint;
+        if your plan doesn't include it, manual entry still works.
       </p>
     </div>
   );
 }
+
