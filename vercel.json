@@ -1,0 +1,12 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron-refresh",
+      "schedule": "0 22 * * 1-5"
+    },
+    {
+      "path": "/api/cron-refresh-indicators",
+      "schedule": "30 22 * * 1-5"
+    }
+  ]
+}
