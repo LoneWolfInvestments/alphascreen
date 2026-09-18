@@ -14,7 +14,7 @@ function fundamentalSignal(score) {
   return "Hold";
 }
 function technicalRead(q) {
-  if (!q) return { sig: null, rr: null, reason: [] };
+  if (!q) return { sig: null, rr: null, reasons: [] };
   const reasons = [];
   let score = 0;
   if (q.rsi != null) {
