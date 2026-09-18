@@ -1,6 +1,7 @@
 // src/App.jsx
 import React, { useState } from "react";
 import "./styles.css";
+import Opportunities from "./components/Opportunities";
 import Overview from "./components/Overview";
 import FundamentalScreener from "./components/FundamentalScreener";
 import TechnicalAnalysis from "./components/TechnicalAnalysis";
@@ -10,7 +11,8 @@ import Positioning from "./components/Positioning";
 import AiAnalyst from "./components/AiAnalyst";
 
 const TABS = [
-  { key: "overview", label: "Overview", Component: Overview },
+  { key: "opportunities", label: "Opportunities", Component: Opportunities },
+  { key: "overview", label: "Overview (raw)", Component: Overview },
   { key: "fundamental", label: "Fundamental Screener", Component: FundamentalScreener },
   { key: "technical", label: "Technical Analysis", Component: TechnicalAnalysis },
   { key: "vix", label: "VIX Dashboard", Component: VixDashboard },
@@ -20,7 +22,7 @@ const TABS = [
 ];
 
 export default function App() {
-  const [active, setActive] = useState("overview");
+  const [active, setActive] = useState("opportunities");
   const ActiveComponent = TABS.find((t) => t.key === active).Component;
 
   return (
