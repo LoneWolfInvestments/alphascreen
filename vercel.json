@@ -7,6 +7,18 @@
     {
       "path": "/api/cron-refresh-indicators",
       "schedule": "30 22 * * 1-5"
+    },
+    {
+      "path": "/api/cron-refresh-insider",
+      "schedule": "0 23 * * 1-5"
+    },
+    {
+      "path": "/api/cron-refresh-congress",
+      "schedule": "15 23 * * 1-5"
+    },
+    {
+      "path": "/api/cron-refresh-cot",
+      "schedule": "0 12 * * 6"
     }
   ]
 }
