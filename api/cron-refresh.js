@@ -12,7 +12,11 @@ const supabase = createClient(
 );
 
 const TWELVE_DATA_BASE = "https://api.twelvedata.com";
-const BATCH_SIZE = 100; // Twelve Data allows comma-separated symbols per request; stay under plan limits
+// Twelve Data's free tier charges roughly 1 credit per symbol even in a batched
+// /quote call, and the account-wide limit is 8 credits/minute — so batches need
+// to be small, sharded across separate cron triggers spaced a couple of minutes
+// apart, same fix as cron-refresh-indicators.js.
+const BATCH_SIZE = 6;
 
 function chunk(arr, size) {
   const out = [];
@@ -44,18 +48,28 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
+  // Same sharding pattern as cron-refresh-indicators.js: process only every Nth
+  // symbol per invocation, with vercel.json triggering each shard a couple of
+  // minutes apart so Twelve Data's per-minute credit limit resets between them.
+  const shard = parseInt(req.query.shard, 10) || 0;
+  const totalShards = parseInt(req.query.shards, 10) || 1;
+
   try {
     const { data: watchlist, error: watchlistError } = await supabase
       .from("watchlist")
       .select("symbol")
-      .eq("active", true);
+      .eq("active", true)
+      .order("symbol", { ascending: true });
 
     if (watchlistError) throw watchlistError;
     if (!watchlist || watchlist.length === 0) {
       return res.status(200).json({ message: "Watchlist is empty, nothing to refresh" });
     }
 
-    const symbols = watchlist.map((w) => w.symbol);
+    const symbols = watchlist.map((w) => w.symbol).filter((_, i) => i % totalShards === shard);
+    if (symbols.length === 0) {
+      return res.status(200).json({ message: "No symbols in this shard", shard, totalShards });
+    }
     const batches = chunk(symbols, BATCH_SIZE);
 
     let updated = 0;
@@ -100,7 +114,7 @@ export default async function handler(req, res) {
       }
     }
 
-    return res.status(200).json({ updated, failed, total: symbols.length });
+    return res.status(200).json({ shard, totalShards, updated, failed, total: symbols.length });
   } catch (err) {
     return res.status(500).json({ error: "Cron refresh failed", detail: err.message });
   }
