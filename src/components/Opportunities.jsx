@@ -4,7 +4,7 @@ import { supabase } from "../lib/supabaseClient";
 
 function fundamentalScore(r) {
   if (!r) return null;
-  const sum = Number(r.insider) + Number(r.politician) + Number(r.options_flow) + Number(r.sentiment);
+  const sum = Number(r.institutional) + Number(r.politician) + Number(r.options_flow) + Number(r.sentiment);
   return Math.round(((sum + 8) / 16) * 100);
 }
 function fundamentalSignal(score) {
@@ -79,7 +79,7 @@ export default function Opportunities() {
 
     const fReasons = [];
     if (f) {
-      if (f.insider !== 0) fReasons.push(`Insider ${f.insider > 0 ? "+" : ""}${f.insider} (${f.insider > 0 ? "recent buying" : "recent selling"})`);
+      if (f.institutional !== 0) fReasons.push(`Institutional ${f.institutional > 0 ? "+" : ""}${f.institutional} (${f.institutional > 0 ? "accumulating" : "distributing"})`);
       if (f.politician !== 0) fReasons.push(`Politician ${f.politician > 0 ? "+" : ""}${f.politician}`);
       if (f.options_flow !== 0) fReasons.push(`Options flow ${f.options_flow > 0 ? "+" : ""}${f.options_flow}`);
       if (f.sentiment !== 0) fReasons.push(`Sentiment ${f.sentiment > 0 ? "+" : ""}${f.sentiment}`);

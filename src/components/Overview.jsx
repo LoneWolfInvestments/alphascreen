@@ -4,7 +4,7 @@ import { supabase } from "../lib/supabaseClient";
 
 function fundamentalScore(r) {
   if (!r) return null;
-  const sum = Number(r.insider) + Number(r.politician) + Number(r.options_flow) + Number(r.sentiment);
+  const sum = Number(r.institutional) + Number(r.politician) + Number(r.options_flow) + Number(r.sentiment);
   return Math.round(((sum + 8) / 16) * 100);
 }
 function fundamentalSignal(score) {
