@@ -82,38 +82,48 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
+  // This job is split into shards to respect Twelve Data's free-tier rate limit
+  // (8 API credits/minute) AND Vercel's 10-second function timeout on the Hobby plan —
+  // both mean we can't fetch a large watchlist sequentially in one run.
+  // ?shard=0&shards=7 processes every 7th symbol starting at index 0.
+  // vercel.json triggers each shard a couple of minutes apart so the per-minute
+  // rate limit resets between batches.
+  const shard = parseInt(req.query.shard, 10) || 0;
+  const totalShards = parseInt(req.query.shards, 10) || 1;
+
   try {
     const { data: watchlist, error: watchlistError } = await supabase
       .from("watchlist")
       .select("symbol")
-      .eq("active", true);
+      .eq("active", true)
+      .order("symbol", { ascending: true }); // stable order so sharding is consistent run to run
 
     if (watchlistError) throw watchlistError;
     if (!watchlist || watchlist.length === 0) {
       return res.status(200).json({ message: "Watchlist is empty, nothing to refresh" });
     }
 
+    const myShare = watchlist.filter((_, i) => i % totalShards === shard);
+
     const results = [];
     const failed = [];
 
-    // Sequential, not parallel — avoids bursting past Twelve Data's per-minute rate limit.
-    // At ~200 symbols this takes a few minutes; fine for a once-daily job.
-    for (const { symbol } of watchlist) {
+    // Twelve Data free tier: 8 credits/minute. Spacing requests ~4s apart keeps us
+    // to about 15/minute worst case within a shard, safely under that per-symbol,
+    // and each shard is small enough to finish inside Vercel's 10s function limit.
+    for (const { symbol } of myShare) {
       try {
         const closes = await fetchTimeSeries(symbol);
         const indicators = computeIndicators(closes);
         results.push({
           symbol,
-          latest_close: closes.at(-1), // used for quotes_history below, not a `quotes` column
+          latest_close: closes.at(-1),
           ...indicators,
           updated_at: new Date().toISOString(),
         });
       } catch (err) {
         failed.push({ symbol, error: err.message });
       }
-
-      // Small delay between requests to stay comfortably under the per-minute limit
-      await new Promise((r) => setTimeout(r, 150));
     }
 
     if (results.length > 0) {
@@ -139,9 +149,11 @@ export default async function handler(req, res) {
     }
 
     return res.status(200).json({
+      shard,
+      totalShards,
       updated: results.length,
       failed,
-      total: watchlist.length,
+      total: myShare.length,
     });
   } catch (err) {
     return res.status(500).json({ error: "Indicator refresh failed", detail: err.message });

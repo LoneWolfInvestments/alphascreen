@@ -5,16 +5,36 @@
       "schedule": "0 22 * * 1-5"
     },
     {
-      "path": "/api/cron-refresh-indicators",
+      "path": "/api/cron-refresh-indicators?shard=0&shards=7",
       "schedule": "30 22 * * 1-5"
+    },
+    {
+      "path": "/api/cron-refresh-indicators?shard=1&shards=7",
+      "schedule": "32 22 * * 1-5"
+    },
+    {
+      "path": "/api/cron-refresh-indicators?shard=2&shards=7",
+      "schedule": "34 22 * * 1-5"
+    },
+    {
+      "path": "/api/cron-refresh-indicators?shard=3&shards=7",
+      "schedule": "36 22 * * 1-5"
+    },
+    {
+      "path": "/api/cron-refresh-indicators?shard=4&shards=7",
+      "schedule": "38 22 * * 1-5"
+    },
+    {
+      "path": "/api/cron-refresh-indicators?shard=5&shards=7",
+      "schedule": "40 22 * * 1-5"
+    },
+    {
+      "path": "/api/cron-refresh-indicators?shard=6&shards=7",
+      "schedule": "42 22 * * 1-5"
     },
     {
       "path": "/api/cron-refresh-insider",
       "schedule": "0 23 * * 1-5"
-    },
-    {
-      "path": "/api/cron-refresh-congress",
-      "schedule": "15 23 * * 1-5"
     },
     {
       "path": "/api/cron-refresh-cot",
