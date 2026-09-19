@@ -3,8 +3,8 @@ import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "../lib/supabaseClient";
 
 function fundamentalScore(r) {
-  if (!r) return null;
-  return Math.round(((Number(r.institutional) + 2) / 4) * 100);
+  if (!r || r.inst_net_breadth == null) return null;
+  return Math.round(50 + r.inst_net_breadth);
 }
 function fundamentalSignal(score) {
   if (score == null) return null;
@@ -77,8 +77,8 @@ export default function Opportunities() {
     const held = !!p;
 
     const fReasons = [];
-    if (f) {
-      if (f.institutional !== 0) fReasons.push(`Institutional ${f.institutional > 0 ? "+" : ""}${f.institutional} (${f.institutional > 0 ? "accumulating" : "distributing"})`);
+    if (f && f.inst_net_breadth != null) {
+      fReasons.push(`Institutional breadth ${f.inst_net_breadth > 0 ? "+" : ""}${f.inst_net_breadth.toFixed(1)}% (${f.inst_buyers} buyers vs ${f.inst_sellers} sellers)`);
     }
 
     let category, priority, headline;

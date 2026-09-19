@@ -16,7 +16,7 @@ import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 
-async function fetchInstitutionalSignal(ticker) {
+async function fetchInstitutionalData(ticker) {
   const url = `https://api.oanor.com/institutions-api/v1/activity?symbol=${ticker}`;
   const res = await fetch(url, {
     headers: { "x-oanor-key": process.env.OANOR_API_KEY },
@@ -34,20 +34,9 @@ async function fetchInstitutionalSignal(ticker) {
   const buyers = (d.increased_positions?.holders || 0) + (d.new_positions?.holders || 0);
   const sellers = (d.decreased_positions?.holders || 0) + (d.sold_out_positions?.holders || 0);
   const total = buyers + sellers;
-  if (total === 0) return 0;
+  const netBreadthPct = total > 0 ? ((buyers - sellers) / total) * 100 : 0;
 
-  const netBreadth = (buyers - sellers) / total; // -1..1
-
-  // Recalibrated against real data: NVDA (clear accumulation) showed ~15.5% net
-  // breadth, nowhere near the original ±50% thresholds — those were unreachable
-  // in practice, which is why everything landed on the same "+1" bucket. Real
-  // institutional breadth rarely swings past roughly ±25%, so thresholds are
-  // set to actually differentiate within that realistic range.
-  if (netBreadth > 0.25) return 2;
-  if (netBreadth > 0.05) return 1;
-  if (netBreadth >= -0.05) return 0;
-  if (netBreadth >= -0.25) return -1;
-  return -2;
+  return { buyers, sellers, netBreadthPct };
 }
 
 export default async function handler(req, res) {
@@ -76,8 +65,13 @@ export default async function handler(req, res) {
 
     for (const { ticker } of myShare) {
       try {
-        const signal = await fetchInstitutionalSignal(ticker);
-        await supabase.from("fundamental_scores").update({ institutional: signal, updated_at: new Date().toISOString() }).eq("ticker", ticker);
+        const { buyers, sellers, netBreadthPct } = await fetchInstitutionalData(ticker);
+        await supabase.from("fundamental_scores").update({
+          inst_buyers: buyers,
+          inst_sellers: sellers,
+          inst_net_breadth: netBreadthPct,
+          updated_at: new Date().toISOString(),
+        }).eq("ticker", ticker);
         results.push(ticker);
       } catch (err) {
         failed.push({ ticker, error: err.message });

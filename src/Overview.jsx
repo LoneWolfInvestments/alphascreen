@@ -3,9 +3,10 @@ import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "../lib/supabaseClient";
 
 function fundamentalScore(r) {
-  if (!r) return null;
-  const sum = Number(r.insider) + Number(r.politician) + Number(r.options_flow) + Number(r.sentiment);
-  return Math.round(((sum + 8) / 16) * 100);
+  if (!r || r.inst_net_breadth == null) return null;
+  // Map breadth (-100%..+100%, though realistically usually within ±30%) onto
+  // the same 0-100 display scale used elsewhere, centered at 50.
+  return Math.round(50 + r.inst_net_breadth);
 }
 function fundamentalSignal(score) {
   if (score == null) return null;
