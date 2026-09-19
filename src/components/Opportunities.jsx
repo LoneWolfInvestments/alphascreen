@@ -4,8 +4,7 @@ import { supabase } from "../lib/supabaseClient";
 
 function fundamentalScore(r) {
   if (!r) return null;
-  const sum = Number(r.institutional) + Number(r.politician) + Number(r.options_flow) + Number(r.sentiment);
-  return Math.round(((sum + 8) / 16) * 100);
+  return Math.round(((Number(r.institutional) + 2) / 4) * 100);
 }
 function fundamentalSignal(score) {
   if (score == null) return null;
@@ -80,9 +79,6 @@ export default function Opportunities() {
     const fReasons = [];
     if (f) {
       if (f.institutional !== 0) fReasons.push(`Institutional ${f.institutional > 0 ? "+" : ""}${f.institutional} (${f.institutional > 0 ? "accumulating" : "distributing"})`);
-      if (f.politician !== 0) fReasons.push(`Politician ${f.politician > 0 ? "+" : ""}${f.politician}`);
-      if (f.options_flow !== 0) fReasons.push(`Options flow ${f.options_flow > 0 ? "+" : ""}${f.options_flow}`);
-      if (f.sentiment !== 0) fReasons.push(`Sentiment ${f.sentiment > 0 ? "+" : ""}${f.sentiment}`);
     }
 
     let category, priority, headline;

@@ -2,19 +2,27 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "../lib/supabaseClient";
 
-function compositeScore(institutional, politician, flow, sentiment) {
-  const sum = institutional + politician + flow + sentiment;
-  return Math.round(((sum + 8) / 16) * 100);
+function scoreFromInstitutional(institutional) {
+  // institutional ranges -2..2; scale to 0-100 same as before for consistent thresholds
+  return Math.round(((Number(institutional) + 2) / 4) * 100);
 }
 function signal(score) {
   if (score >= 65) return { label: "Buy", color: "#3ecf8e" };
   if (score <= 35) return { label: "Sell", color: "#f0555a" };
   return { label: "Hold", color: "#f0b955" };
 }
+const fmtNum = (n, digits = 2) => (n == null ? "—" : Number(n).toFixed(digits));
+const fmtCap = (n) => {
+  if (n == null) return "—";
+  if (n >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
+  if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+  if (n >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
+  return `$${n}`;
+};
 
 export default function FundamentalScreener() {
   const [rows, setRows] = useState([]);
-  const [form, setForm] = useState({ ticker: "", institutional: 0, politician: 0, options_flow: 0, sentiment: 0, notes: "" });
+  const [ticker, setTicker] = useState("");
 
   const load = useCallback(async () => {
     const { data } = await supabase.from("fundamental_scores").select("*").order("ticker");
@@ -30,84 +38,73 @@ export default function FundamentalScreener() {
     return () => supabase.removeChannel(channel);
   }, [load]);
 
-  const addRow = async () => {
-    if (!form.ticker.trim()) return;
+  const addTicker = async () => {
+    if (!ticker.trim()) return;
     await supabase.from("fundamental_scores").upsert({
-      ticker: form.ticker.trim().toUpperCase(),
-      institutional: Number(form.institutional) || 0,
-      politician: Number(form.politician) || 0,
-      options_flow: Number(form.options_flow) || 0,
-      sentiment: Number(form.sentiment) || 0,
-      notes: form.notes.trim(),
+      ticker: ticker.trim().toUpperCase(),
+      institutional: 0,
       updated_at: new Date().toISOString(),
     });
-    setForm({ ticker: "", institutional: 0, politician: 0, options_flow: 0, sentiment: 0, notes: "" });
+    setTicker("");
   };
 
-  const removeRow = async (ticker) => {
-    await supabase.from("fundamental_scores").delete().eq("ticker", ticker);
+  const removeRow = async (t) => {
+    await supabase.from("fundamental_scores").delete().eq("ticker", t);
   };
 
-  const sorted = [...rows].sort(
-    (a, b) => compositeScore(b.institutional, b.politician, b.options_flow, b.sentiment) - compositeScore(a.institutional, a.politician, a.options_flow, a.sentiment)
-  );
+  const sorted = [...rows].sort((a, b) => scoreFromInstitutional(b.institutional) - scoreFromInstitutional(a.institutional));
 
   return (
     <div className="panel">
-      <h2>Add / Score a Name</h2>
+      <h2>Fundamental Screener</h2>
       <div className="add-form">
-        <Field label="Ticker" value={form.ticker} onChange={(v) => setForm({ ...form, ticker: v })} width={80} />
-        <Field label="Institutional Flow (-2..2)" type="number" value={form.institutional} onChange={(v) => setForm({ ...form, institutional: v })} />
-        <Field label="Politician (-2..2)" type="number" value={form.politician} onChange={(v) => setForm({ ...form, politician: v })} />
-        <Field label="Options Flow (-2..2)" type="number" value={form.options_flow} onChange={(v) => setForm({ ...form, options_flow: v })} />
-        <Field label="Sentiment (-2..2)" type="number" value={form.sentiment} onChange={(v) => setForm({ ...form, sentiment: v })} />
-        <Field label="Notes" value={form.notes} onChange={(v) => setForm({ ...form, notes: v })} width={160} />
-        <button className="action" onClick={addRow}>Add</button>
+        <div className="field" style={{ minWidth: 100 }}>
+          <label>Add Ticker</label>
+          <input value={ticker} onChange={(e) => setTicker(e.target.value)} placeholder="AAPL" />
+        </div>
+        <button className="action" onClick={addTicker}>Add</button>
       </div>
+      <p className="disclaimer" style={{ marginTop: 0, marginBottom: 12, borderTop: "none", paddingTop: 0 }}>
+        Adding a ticker here just registers it so the monthly institutional flow automation has something to update —
+        everything below fills in automatically from there.
+      </p>
 
       <div className="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>Ticker</th><th>Institutional</th><th>Politician</th><th>Flow</th><th>Sentiment</th>
-              <th>Composite</th><th>Signal</th><th>Notes</th><th></th>
+              <th>Ticker</th><th>Institutional Flow</th><th>Signal</th>
+              <th>P/E</th><th>Mkt Cap</th><th>EPS</th><th>Margin</th><th>Next Earnings</th><th>Analyst</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
             {sorted.map((r) => {
-              const score = compositeScore(r.institutional, r.politician, r.options_flow, r.sentiment);
+              const score = scoreFromInstitutional(r.institutional);
               const sig = signal(score);
               return (
                 <tr key={r.ticker}>
                   <td><strong>{r.ticker}</strong></td>
                   <td>{r.institutional}</td>
-                  <td>{r.politician}</td>
-                  <td>{r.options_flow}</td>
-                  <td>{r.sentiment}</td>
-                  <td><strong>{score}</strong></td>
                   <td><span className="badge" style={{ background: sig.color + "26", color: sig.color }}>{sig.label}</span></td>
-                  <td>{r.notes}</td>
+                  <td>{fmtNum(r.pe_ratio, 1)}</td>
+                  <td>{fmtCap(r.market_cap)}</td>
+                  <td>{fmtNum(r.eps)}</td>
+                  <td>{r.profit_margin != null ? `${(r.profit_margin * 100).toFixed(1)}%` : "—"}</td>
+                  <td>{r.next_earnings_date || "—"}</td>
+                  <td>{r.analyst_rating || "—"}</td>
                   <td><button className="action danger" onClick={() => removeRow(r.ticker)}>x</button></td>
                 </tr>
               );
             })}
           </tbody>
         </table>
-        {rows.length === 0 && <div className="empty">No names screened yet — add one above.</div>}
+        {rows.length === 0 && <div className="empty">No names screened yet — add a ticker above.</div>}
       </div>
       <p className="disclaimer">
-        Composite score is a simple weighted average of the four inputs (heuristic filter, not a valuation model).
-        Institutional Flow is derived from 13F filing changes (quarterly) via Finnhub, updated automatically.
+        Institutional Flow, P/E, Market Cap, EPS, Margin, Next Earnings, and Analyst rating are all pulled
+        automatically — nothing here needs manual entry beyond adding the ticker itself.
       </p>
-    </div>
-  );
-}
-
-function Field({ label, value, onChange, type = "text", width }) {
-  return (
-    <div className="field" style={width ? { minWidth: width } : {}}>
-      <label>{label}</label>
-      <input type={type} value={value} onChange={(e) => onChange(e.target.value)} />
     </div>
   );
 }

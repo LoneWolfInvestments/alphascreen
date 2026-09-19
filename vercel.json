@@ -16,7 +16,18 @@
     { "path": "/api/cron-refresh-indicators?shard=5&shards=7", "schedule": "40 22 * * 1-5" },
     { "path": "/api/cron-refresh-indicators?shard=6&shards=7", "schedule": "42 22 * * 1-5" },
 
-    { "path": "/api/cron-refresh-institutional", "schedule": "0 23 * * 1-5" },
+    { "path": "/api/cron-refresh-institutional?shard=0&shards=5", "schedule": "0 20 1 * *" },
+    { "path": "/api/cron-refresh-institutional?shard=1&shards=5", "schedule": "5 20 1 * *" },
+    { "path": "/api/cron-refresh-institutional?shard=2&shards=5", "schedule": "10 20 1 * *" },
+    { "path": "/api/cron-refresh-institutional?shard=3&shards=5", "schedule": "15 20 1 * *" },
+    { "path": "/api/cron-refresh-institutional?shard=4&shards=5", "schedule": "20 20 1 * *" },
+
+    { "path": "/api/cron-refresh-fundamentals?shard=0&shards=5", "schedule": "0 19 * * 0" },
+    { "path": "/api/cron-refresh-fundamentals?shard=1&shards=5", "schedule": "10 19 * * 0" },
+    { "path": "/api/cron-refresh-fundamentals?shard=2&shards=5", "schedule": "20 19 * * 0" },
+    { "path": "/api/cron-refresh-fundamentals?shard=3&shards=5", "schedule": "30 19 * * 0" },
+    { "path": "/api/cron-refresh-fundamentals?shard=4&shards=5", "schedule": "40 19 * * 0" },
+
     { "path": "/api/cron-refresh-cot", "schedule": "0 12 * * 6" }
   ]
 }

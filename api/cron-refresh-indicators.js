@@ -6,7 +6,7 @@
 // npm install technicalindicators @supabase/supabase-js
 
 import { createClient } from "@supabase/supabase-js";
-import { RSI, MACD, BollingerBands } from "technicalindicators";
+import { RSI, MACD, BollingerBands, ATR, ADX } from "technicalindicators";
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -22,6 +22,8 @@ const MACD_SLOW = 26;
 const MACD_SIGNAL = 9;
 const BBANDS_PERIOD = 20;
 const BBANDS_STDDEV = 2;
+const ATR_PERIOD = 14;
+const ADX_PERIOD = 14;
 
 // Need enough bars for the slowest indicator (MACD needs ~26+9) plus buffer
 const OUTPUT_SIZE = 60;
@@ -40,11 +42,17 @@ async function fetchTimeSeries(symbol) {
     throw new Error(data.message || `No time series data for ${symbol}`);
   }
 
-  // Twelve Data returns newest-first; indicators need oldest-first chronological order
-  return data.values.map((v) => parseFloat(v.close)).reverse();
+  // Twelve Data returns newest-first; indicators need oldest-first chronological order.
+  // ATR/ADX also need high/low, so pull all three here rather than a second API call.
+  const values = data.values.slice().reverse();
+  return {
+    closes: values.map((v) => parseFloat(v.close)),
+    highs: values.map((v) => parseFloat(v.high)),
+    lows: values.map((v) => parseFloat(v.low)),
+  };
 }
 
-function computeIndicators(closes) {
+function computeIndicators({ closes, highs, lows }) {
   const rsiValues = RSI.calculate({ period: RSI_PERIOD, values: closes });
   const macdValues = MACD.calculate({
     fastPeriod: MACD_FAST,
@@ -59,12 +67,16 @@ function computeIndicators(closes) {
     values: closes,
     stdDev: BBANDS_STDDEV,
   });
+  const atrValues = ATR.calculate({ period: ATR_PERIOD, high: highs, low: lows, close: closes });
+  const adxValues = ADX.calculate({ period: ADX_PERIOD, close: closes, high: highs, low: lows });
 
   // Each array is shorter than `closes` since indicators need a warmup window —
   // the last element is the most recent computed value.
   const latestRsi = rsiValues.at(-1);
   const latestMacd = macdValues.at(-1);
   const latestBbands = bbandsValues.at(-1);
+  const latestAtr = atrValues.at(-1);
+  const latestAdx = adxValues.at(-1);
 
   return {
     rsi: latestRsi ?? null,
@@ -73,6 +85,8 @@ function computeIndicators(closes) {
     bb_upper: latestBbands?.upper ?? null,
     bb_middle: latestBbands?.middle ?? null,
     bb_lower: latestBbands?.lower ?? null,
+    atr: latestAtr ?? null,
+    adx: latestAdx?.adx ?? null,
   };
 }
 
@@ -113,11 +127,11 @@ export default async function handler(req, res) {
     // and each shard is small enough to finish inside Vercel's 10s function limit.
     for (const { symbol } of myShare) {
       try {
-        const closes = await fetchTimeSeries(symbol);
-        const indicators = computeIndicators(closes);
+        const series = await fetchTimeSeries(symbol);
+        const indicators = computeIndicators(series);
         results.push({
           symbol,
-          latest_close: closes.at(-1),
+          latest_close: series.closes.at(-1),
           ...indicators,
           updated_at: new Date().toISOString(),
         });
