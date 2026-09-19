@@ -38,10 +38,15 @@ async function fetchInstitutionalSignal(ticker) {
 
   const netBreadth = (buyers - sellers) / total; // -1..1
 
-  if (netBreadth > 0.5) return 2;
-  if (netBreadth > 0) return 1;
-  if (netBreadth === 0) return 0;
-  if (netBreadth > -0.5) return -1;
+  // Recalibrated against real data: NVDA (clear accumulation) showed ~15.5% net
+  // breadth, nowhere near the original ±50% thresholds — those were unreachable
+  // in practice, which is why everything landed on the same "+1" bucket. Real
+  // institutional breadth rarely swings past roughly ±25%, so thresholds are
+  // set to actually differentiate within that realistic range.
+  if (netBreadth > 0.25) return 2;
+  if (netBreadth > 0.05) return 1;
+  if (netBreadth >= -0.05) return 0;
+  if (netBreadth >= -0.25) return -1;
   return -2;
 }
 
