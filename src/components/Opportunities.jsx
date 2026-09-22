@@ -2,15 +2,26 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "../lib/supabaseClient";
 
-function fundamentalScore(r) {
-  if (!r || r.inst_net_breadth == null) return null;
-  return Math.round(50 + r.inst_net_breadth);
-}
-function fundamentalSignal(score) {
-  if (score == null) return null;
-  if (score >= 65) return "Buy";
-  if (score <= 35) return "Sell";
-  return "Hold";
+function fundamentalRead(f) {
+  if (!f) return { score: null, sig: null, reasons: [] };
+  const hasBreadth = f.inst_net_breadth != null;
+  const hasAnalyst = !!f.analyst_rating;
+  if (!hasBreadth && !hasAnalyst) return { score: null, sig: null, reasons: [] };
+
+  const reasons = [];
+  if (hasBreadth) reasons.push(`Institutional breadth ${f.inst_net_breadth > 0 ? "+" : ""}${f.inst_net_breadth.toFixed(1)}% (${f.inst_buyers} buyers vs ${f.inst_sellers} sellers)`);
+  if (hasAnalyst) reasons.push(`Analyst consensus: ${f.analyst_rating}`);
+
+  const breadthPoints = hasBreadth ? f.inst_net_breadth / 50 : 0;
+  const analystPoints = f.analyst_rating === "Buy" ? 1 : f.analyst_rating === "Sell" ? -1 : 0;
+  const inputs = (hasBreadth ? 1 : 0) + (hasAnalyst ? 1 : 0);
+  const combined = (breadthPoints + analystPoints) / inputs;
+
+  const score = hasBreadth ? Math.round(50 + f.inst_net_breadth) : null;
+  let sig = "Hold";
+  if (combined > 0.3) sig = "Buy";
+  else if (combined < -0.3) sig = "Sell";
+  return { score, sig, reasons };
 }
 function technicalRead(q) {
   if (!q) return { sig: null, rr: null, reasons: [] };
@@ -33,10 +44,16 @@ function technicalRead(q) {
     if (q.sma_50 > q.sma_200) { score += 1; reasons.push("50 SMA above 200 SMA (uptrend structure)"); }
     else { score -= 1; reasons.push("50 SMA below 200 SMA (downtrend structure)"); }
   }
+  if (q.price != null && q.donchian_upper != null && q.donchian_lower != null && q.donchian_upper !== q.donchian_lower) {
+    hasData = true;
+    const pos = (q.price - q.donchian_lower) / (q.donchian_upper - q.donchian_lower);
+    if (pos > 0.9) { score += 1; reasons.push("Price near 20-day high (Donchian breakout)"); }
+    else if (pos < 0.1) { score -= 1; reasons.push("Price near 20-day low (Donchian breakdown)"); }
+  }
 
   // ADX doesn't add to the directional score — it tells you whether the other
   // signals are trustworthy in the first place. A weak ADX means "Buy"/"Sell"
-  // here is a low-conviction read regardless of what RSI/MACD/SMA say.
+  // here is a low-conviction read regardless of what RSI/MACD/SMA/Donchian say.
   if (q.adx != null && q.adx < 20) {
     reasons.push(`ADX ${Number(q.adx).toFixed(0)} (weak/no trend — signal less reliable)`);
   } else if (q.adx != null && q.adx >= 25) {
@@ -55,6 +72,12 @@ function technicalRead(q) {
     rr = Math.abs((q.donchian_upper - q.price) / (q.price - q.donchian_lower));
   }
   return { sig, rr, reasons };
+}
+function earningsReason(dateStr) {
+  if (!dateStr) return null;
+  const days = Math.round((new Date(dateStr) - new Date()) / (1000 * 60 * 60 * 24));
+  if (days < 0 || days > 14) return null;
+  return `Earnings in ${days}d — event risk`;
 }
 
 export default function Opportunities() {
@@ -92,15 +115,11 @@ export default function Opportunities() {
     const q = quotes.find((r) => r.symbol === ticker);
     const p = portfolio.find((r) => r.ticker === ticker);
 
-    const fScore = fundamentalScore(f);
-    const fSig = fundamentalSignal(fScore);
+    const { score: fScore, sig: fSig, reasons: fReasons } = fundamentalRead(f);
     const { sig: tSig, rr, reasons: tReasons } = technicalRead(q);
     const held = !!p;
 
-    const fReasons = [];
-    if (f && f.inst_net_breadth != null) {
-      fReasons.push(`Institutional breadth ${f.inst_net_breadth > 0 ? "+" : ""}${f.inst_net_breadth.toFixed(1)}% (${f.inst_buyers} buyers vs ${f.inst_sellers} sellers)`);
-    }
+    const earnReason = earningsReason(f?.next_earnings_date);
 
     let category, priority, headline;
     if (!held && fSig === "Buy" && tSig === "Buy") {
@@ -108,10 +127,10 @@ export default function Opportunities() {
       headline = "Fundamentals and technicals both bullish, not currently held";
     } else if (held && fSig === "Buy" && tSig === "Buy") {
       category = "Add to Existing Position"; priority = 1;
-      headline = `Both signals bullish — currently ${p.weight}% weight, conviction ${p.conviction}/5`;
+      headline = "Already held — both signals bullish, worth considering adding";
     } else if (held && (fSig === "Sell" || tSig === "Sell")) {
       category = "Review Position"; priority = 2;
-      headline = `Held at ${p.weight}% but showing a bearish signal — worth a closer look`;
+      headline = "Currently held but showing a bearish signal — worth a closer look";
     } else if (fSig && tSig && fSig !== tSig && fSig !== "Hold" && tSig !== "Hold") {
       category = "Conflicting — Watch"; priority = 3;
       headline = `Fundamental says ${fSig}, technical says ${tSig} — disagreement itself is informative`;
@@ -124,9 +143,9 @@ export default function Opportunities() {
     }
 
     return {
-      ticker, fScore, fSig, tSig, rr, held, weight: p?.weight, conviction: p?.conviction,
+      ticker, fScore, fSig, tSig, rr, held,
       price: q?.price, category, priority, headline,
-      allReasons: [...fReasons, ...tReasons, rr != null ? `R:R ${rr.toFixed(2)}` : null].filter(Boolean),
+      allReasons: [...fReasons, ...tReasons, rr != null ? `R:R ${rr.toFixed(2)}` : null, earnReason].filter(Boolean),
     };
   });
 
