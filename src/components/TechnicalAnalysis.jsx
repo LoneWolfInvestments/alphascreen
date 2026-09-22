@@ -3,11 +3,11 @@ import React from "react";
 import { useWatchlistQuotes } from "../hooks/useWatchlistQuotes";
 
 function computeDerived(q) {
-  // Use RSI/MACD/BB from the live indicator job; approximate support/resistance
-  // from Bollinger Bands since we don't store a separate support/resistance field.
+  // Donchian Channels (actual price extremes over 20 days) are a more honest
+  // stop/target reference than the Bollinger Band approximation used before.
   const price = q.price;
-  const support = q.bb_lower;
-  const resistance = q.bb_upper;
+  const support = q.donchian_lower;
+  const resistance = q.donchian_upper;
   const fib618 = (resistance != null && support != null) ? (resistance - (resistance - support) * 0.618) : null;
 
   const entry = price;
@@ -16,8 +16,14 @@ function computeDerived(q) {
   const rr = (entry != null && stop != null && target != null && entry !== stop)
     ? Math.abs((target - entry) / (entry - stop)) : null;
 
+  // Trend now confirmed by SMA50 vs SMA200 (classic golden/death cross read),
+  // with MACD sign as momentum context alongside it.
   let trend = "Neutral";
-  if (q.macd != null) trend = q.macd > 0 ? "Uptrend" : "Downtrend";
+  if (q.sma_50 != null && q.sma_200 != null) {
+    trend = q.sma_50 > q.sma_200 ? "Uptrend" : "Downtrend";
+  } else if (q.macd != null) {
+    trend = q.macd > 0 ? "Uptrend" : "Downtrend";
+  }
 
   return { fib618, entry, stop, target, rr, trend };
 }
@@ -25,6 +31,7 @@ function computeDerived(q) {
 export default function TechnicalAnalysis() {
   const { quotes, loading, error, lastUpdated, refetch } = useWatchlistQuotes();
   const fmt = (n) => (n == null || isNaN(n)) ? "—" : Number(n).toFixed(2);
+  const fmtVol = (n) => (n == null ? "—" : Number(n).toLocaleString());
 
   return (
     <div className="panel">
@@ -43,7 +50,9 @@ export default function TechnicalAnalysis() {
           <table>
             <thead>
               <tr>
-                <th>Ticker</th><th>Price</th><th>Trend</th><th>RSI</th><th>MACD</th>
+                <th>Ticker</th><th>Price</th><th>Volume</th><th>50 SMA</th><th>200 SMA</th>
+                <th>Trend</th><th>RSI</th><th>ADX</th><th>MACD</th><th>ATR</th>
+                <th>Donchian Up</th><th>Donchian Low</th>
                 <th>Fib 0.618</th><th>Entry</th><th>Stop</th><th>Target</th><th>R:R</th>
               </tr>
             </thead>
@@ -54,9 +63,16 @@ export default function TechnicalAnalysis() {
                   <tr key={q.symbol}>
                     <td><strong>{q.symbol}</strong></td>
                     <td>{fmt(q.price)}</td>
+                    <td>{fmtVol(q.volume)}</td>
+                    <td>{fmt(q.sma_50)}</td>
+                    <td>{fmt(q.sma_200)}</td>
                     <td>{c.trend}</td>
                     <td>{fmt(q.rsi)}</td>
+                    <td>{fmt(q.adx)}</td>
                     <td>{fmt(q.macd)}</td>
+                    <td>{fmt(q.atr)}</td>
+                    <td>{fmt(q.donchian_upper)}</td>
+                    <td>{fmt(q.donchian_lower)}</td>
                     <td>{fmt(c.fib618)}</td>
                     <td>{fmt(c.entry)}</td>
                     <td>{fmt(c.stop)}</td>
@@ -73,8 +89,11 @@ export default function TechnicalAnalysis() {
         <div className="empty">No quotes yet — add symbols to the watchlist table in Supabase and trigger a refresh.</div>
       )}
       <p className="disclaimer">
-        Stop/target are approximated from Bollinger Band lower/upper since no separate support/resistance feed is wired in.
-        Trend is read off MACD sign. Treat these as rough reference levels, not precision entries.
+        Trend reads 50 SMA vs 200 SMA (falls back to MACD sign if SMAs aren't available yet, e.g. right after adding
+        a new symbol before 200 days of history accumulate). Stop/Target use the 20-day Donchian Channel — actual
+        recent price extremes, not a statistical band. ADX above ~25 generally signals a genuinely trending market;
+        below that, MACD/RSI signals are less reliable since there's no strong trend to confirm them. ATR is in the
+        same units as price — a useful reference for how far a stop should realistically sit given normal volatility.
       </p>
     </div>
   );

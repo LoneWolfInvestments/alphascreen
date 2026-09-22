@@ -6,7 +6,7 @@
 // npm install technicalindicators @supabase/supabase-js
 
 import { createClient } from "@supabase/supabase-js";
-import { RSI, MACD, BollingerBands, ATR, ADX } from "technicalindicators";
+import { RSI, MACD, BollingerBands, ATR, ADX, SMA } from "technicalindicators";
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -24,9 +24,15 @@ const BBANDS_PERIOD = 20;
 const BBANDS_STDDEV = 2;
 const ATR_PERIOD = 14;
 const ADX_PERIOD = 14;
+const SMA_SHORT_PERIOD = 50;
+const SMA_LONG_PERIOD = 200;
+const DONCHIAN_PERIOD = 20;
 
-// Need enough bars for the slowest indicator (MACD needs ~26+9) plus buffer
-const OUTPUT_SIZE = 60;
+// Need enough bars for the slowest indicator — 200 SMA needs 200 bars, so this
+// is a meaningful jump from the 60 we used before. TESTING NEEDED: a larger
+// outputsize may cost more Twelve Data credits per call than the smaller
+// request did — verify with one shard before assuming this is free.
+const OUTPUT_SIZE = 210;
 
 async function fetchTimeSeries(symbol) {
   const url = new URL(`${TWELVE_DATA_BASE}/time_series`);
@@ -69,6 +75,17 @@ function computeIndicators({ closes, highs, lows }) {
   });
   const atrValues = ATR.calculate({ period: ATR_PERIOD, high: highs, low: lows, close: closes });
   const adxValues = ADX.calculate({ period: ADX_PERIOD, close: closes, high: highs, low: lows });
+  const sma50Values = SMA.calculate({ period: SMA_SHORT_PERIOD, values: closes });
+  const sma200Values = SMA.calculate({ period: SMA_LONG_PERIOD, values: closes });
+
+  // Donchian Channels: not in the technicalindicators package, so computed
+  // directly — upper = highest high, lower = lowest low, over the lookback period.
+  const donchianSlice = closes.length >= DONCHIAN_PERIOD
+    ? { highs: highs.slice(-DONCHIAN_PERIOD), lows: lows.slice(-DONCHIAN_PERIOD) }
+    : null;
+  const donchianUpper = donchianSlice ? Math.max(...donchianSlice.highs) : null;
+  const donchianLower = donchianSlice ? Math.min(...donchianSlice.lows) : null;
+  const donchianMiddle = (donchianUpper != null && donchianLower != null) ? (donchianUpper + donchianLower) / 2 : null;
 
   // Each array is shorter than `closes` since indicators need a warmup window —
   // the last element is the most recent computed value.
@@ -87,6 +104,11 @@ function computeIndicators({ closes, highs, lows }) {
     bb_lower: latestBbands?.lower ?? null,
     atr: latestAtr ?? null,
     adx: latestAdx?.adx ?? null,
+    sma_50: sma50Values.at(-1) ?? null,
+    sma_200: sma200Values.at(-1) ?? null,
+    donchian_upper: donchianUpper,
+    donchian_lower: donchianLower,
+    donchian_middle: donchianMiddle,
   };
 }
 
