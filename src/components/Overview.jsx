@@ -3,8 +3,10 @@ import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "../lib/supabaseClient";
 
 function fundamentalScore(r) {
-  if (!r) return null;
-  return Math.round(((Number(r.institutional) + 2) / 4) * 100);
+  if (!r || r.inst_net_breadth == null) return null;
+  // Map breadth (-100%..+100%, though realistically usually within ±30%) onto
+  // the same 0-100 display scale used elsewhere, centered at 50.
+  return Math.round(50 + r.inst_net_breadth);
 }
 function fundamentalSignal(score) {
   if (score == null) return null;
@@ -26,9 +28,13 @@ function technicalSignal(q) {
     hasData = true;
     score += q.macd > 0 ? 1 : -1;
   }
+  if (q.sma_50 != null && q.sma_200 != null) {
+    hasData = true;
+    score += q.sma_50 > q.sma_200 ? 1 : -1;
+  }
   if (!hasData) return null;
-  if (score >= 1) return "Buy";
-  if (score <= -1) return "Sell";
+  if (score >= 2) return "Buy";
+  if (score <= -2) return "Sell";
   return "Hold";
 }
 

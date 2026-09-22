@@ -16,22 +16,43 @@ function technicalRead(q) {
   if (!q) return { sig: null, rr: null, reasons: [] };
   const reasons = [];
   let score = 0;
+  let hasData = false;
+
   if (q.rsi != null) {
+    hasData = true;
     if (q.rsi < 35) { score += 1; reasons.push(`RSI ${Number(q.rsi).toFixed(0)} (oversold)`); }
     else if (q.rsi > 65) { score -= 1; reasons.push(`RSI ${Number(q.rsi).toFixed(0)} (overbought)`); }
   }
   if (q.macd != null) {
+    hasData = true;
     score += q.macd > 0 ? 1 : -1;
     reasons.push(q.macd > 0 ? "MACD positive (bullish momentum)" : "MACD negative (bearish momentum)");
   }
-  let sig = null;
-  if (score >= 1) sig = "Buy";
-  else if (score <= -1) sig = "Sell";
-  else if (q.rsi != null || q.macd != null) sig = "Hold";
+  if (q.sma_50 != null && q.sma_200 != null) {
+    hasData = true;
+    if (q.sma_50 > q.sma_200) { score += 1; reasons.push("50 SMA above 200 SMA (uptrend structure)"); }
+    else { score -= 1; reasons.push("50 SMA below 200 SMA (downtrend structure)"); }
+  }
 
+  // ADX doesn't add to the directional score — it tells you whether the other
+  // signals are trustworthy in the first place. A weak ADX means "Buy"/"Sell"
+  // here is a low-conviction read regardless of what RSI/MACD/SMA say.
+  if (q.adx != null && q.adx < 20) {
+    reasons.push(`ADX ${Number(q.adx).toFixed(0)} (weak/no trend — signal less reliable)`);
+  } else if (q.adx != null && q.adx >= 25) {
+    reasons.push(`ADX ${Number(q.adx).toFixed(0)} (confirmed trending market)`);
+  }
+
+  let sig = null;
+  if (score >= 2) sig = "Buy";
+  else if (score <= -2) sig = "Sell";
+  else if (hasData) sig = "Hold";
+
+  // Donchian Channel R:R (real price extremes) replaces the old Bollinger-based
+  // approximation, matching the same switch made in Technical Analysis.
   let rr = null;
-  if (q.price != null && q.bb_lower != null && q.bb_upper != null && q.price !== q.bb_lower) {
-    rr = Math.abs((q.bb_upper - q.price) / (q.price - q.bb_lower));
+  if (q.price != null && q.donchian_lower != null && q.donchian_upper != null && q.price !== q.donchian_lower) {
+    rr = Math.abs((q.donchian_upper - q.price) / (q.price - q.donchian_lower));
   }
   return { sig, rr, reasons };
 }
