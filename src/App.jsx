@@ -8,6 +8,7 @@ import TechnicalAnalysis from "./components/TechnicalAnalysis";
 import VixDashboard from "./components/VixDashboard";
 import PortfolioAllocation from "./components/PortfolioAllocation";
 import Positioning from "./components/Positioning";
+import Mag7 from "./components/Mag7";
 import AiAnalyst from "./components/AiAnalyst";
 
 const TABS = [
@@ -15,6 +16,7 @@ const TABS = [
   { key: "overview", label: "Overview (raw)", Component: Overview },
   { key: "fundamental", label: "Fundamental Screener", Component: FundamentalScreener },
   { key: "technical", label: "Technical Analysis", Component: TechnicalAnalysis },
+  { key: "mag7", label: "MAG7", Component: Mag7 },
   { key: "vix", label: "VIX Dashboard", Component: VixDashboard },
   { key: "portfolio", label: "Portfolio Allocation", Component: PortfolioAllocation },
   { key: "positioning", label: "Positioning / Bottleneck", Component: Positioning },
