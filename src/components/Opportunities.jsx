@@ -44,6 +44,11 @@ function technicalRead(q) {
     if (q.sma_50 > q.sma_200) { score += 1; reasons.push("50 SMA above 200 SMA (uptrend structure)"); }
     else { score -= 1; reasons.push("50 SMA below 200 SMA (downtrend structure)"); }
   }
+  if (q.price != null && q.wma_200 != null) {
+    hasData = true;
+    if (q.price >= q.wma_200) { score += 1; reasons.push("Price above 200 WMA"); }
+    else { score -= 1; reasons.push("Price below 200 WMA"); }
+  }
   if (q.price != null && q.donchian_upper != null && q.donchian_lower != null && q.donchian_upper !== q.donchian_lower) {
     hasData = true;
     const pos = (q.price - q.donchian_lower) / (q.donchian_upper - q.donchian_lower);
@@ -61,8 +66,8 @@ function technicalRead(q) {
   }
 
   let sig = null;
-  if (score >= 2) sig = "Buy";
-  else if (score <= -2) sig = "Sell";
+  if (score >= 3) sig = "Buy";
+  else if (score <= -3) sig = "Sell";
   else if (hasData) sig = "Hold";
 
   // Donchian Channel R:R (real price extremes) replaces the old Bollinger-based

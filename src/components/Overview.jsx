@@ -41,6 +41,10 @@ function technicalRead(q) {
     hasData = true;
     score += q.sma_50 > q.sma_200 ? 1 : -1;
   }
+  if (q.price != null && q.wma_200 != null) {
+    hasData = true;
+    score += q.price >= q.wma_200 ? 1 : -1;
+  }
   if (q.price != null && q.donchian_upper != null && q.donchian_lower != null && q.donchian_upper !== q.donchian_lower) {
     hasData = true;
     const pos = (q.price - q.donchian_lower) / (q.donchian_upper - q.donchian_lower);
@@ -56,8 +60,8 @@ function technicalRead(q) {
 
   if (!hasData) return { sig: null, caveats };
   let sig = "Hold";
-  if (score >= 2) sig = "Buy";
-  else if (score <= -2) sig = "Sell";
+  if (score >= 3) sig = "Buy";
+  else if (score <= -3) sig = "Sell";
   return { sig, caveats };
 }
 

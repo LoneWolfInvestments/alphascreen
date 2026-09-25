@@ -25,7 +25,11 @@ function computeDerived(q) {
     trend = q.macd > 0 ? "Uptrend" : "Downtrend";
   }
 
-  return { fib618, entry, stop, target, rr, trend };
+  const wmaRead = (q.price != null && q.wma_200 != null)
+    ? (q.price >= q.wma_200 ? "Above" : "Below")
+    : null;
+
+  return { fib618, entry, stop, target, rr, trend, wmaRead };
 }
 
 export default function TechnicalAnalysis() {
@@ -50,7 +54,7 @@ export default function TechnicalAnalysis() {
           <table>
             <thead>
               <tr>
-                <th>Ticker</th><th>Price</th><th>Volume</th><th>50 SMA</th><th>200 SMA</th>
+                <th>Ticker</th><th>Price</th><th>Volume</th><th>50 SMA</th><th>200 SMA</th><th>200 WMA</th><th>vs WMA</th>
                 <th>Trend</th><th>RSI</th><th>ADX</th><th>MACD</th><th>ATR</th>
                 <th>Donchian Up</th><th>Donchian Low</th>
                 <th>Fib 0.618</th><th>Entry</th><th>Stop</th><th>Target</th><th>R:R</th>
@@ -66,6 +70,10 @@ export default function TechnicalAnalysis() {
                     <td>{fmtVol(q.volume)}</td>
                     <td>{fmt(q.sma_50)}</td>
                     <td>{fmt(q.sma_200)}</td>
+                    <td>{fmt(q.wma_200)}</td>
+                    <td style={{ color: c.wmaRead === "Above" ? "#3ecf8e" : c.wmaRead === "Below" ? "#f0555a" : undefined }}>
+                      {c.wmaRead || "—"}
+                    </td>
                     <td>{c.trend}</td>
                     <td>{fmt(q.rsi)}</td>
                     <td>{fmt(q.adx)}</td>

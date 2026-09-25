@@ -6,7 +6,7 @@
 // npm install technicalindicators @supabase/supabase-js
 
 import { createClient } from "@supabase/supabase-js";
-import { RSI, MACD, BollingerBands, ATR, ADX, SMA } from "technicalindicators";
+import { RSI, MACD, BollingerBands, ATR, ADX, SMA, WMA } from "technicalindicators";
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -77,6 +77,7 @@ function computeIndicators({ closes, highs, lows }) {
   const adxValues = ADX.calculate({ period: ADX_PERIOD, close: closes, high: highs, low: lows });
   const sma50Values = SMA.calculate({ period: SMA_SHORT_PERIOD, values: closes });
   const sma200Values = SMA.calculate({ period: SMA_LONG_PERIOD, values: closes });
+  const wma200Values = WMA.calculate({ period: SMA_LONG_PERIOD, values: closes });
 
   // Donchian Channels: not in the technicalindicators package, so computed
   // directly — upper = highest high, lower = lowest low, over the lookback period.
@@ -106,6 +107,7 @@ function computeIndicators({ closes, highs, lows }) {
     adx: latestAdx?.adx ?? null,
     sma_50: sma50Values.at(-1) ?? null,
     sma_200: sma200Values.at(-1) ?? null,
+    wma_200: wma200Values.at(-1) ?? null,
     donchian_upper: donchianUpper,
     donchian_lower: donchianLower,
     donchian_middle: donchianMiddle,
