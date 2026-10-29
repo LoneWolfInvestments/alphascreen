@@ -1,7 +1,9 @@
 // api/cron-refresh-indicators.js
-// Runs once daily after US market close. For each symbol: pulls one time_series call
-// (not three separate indicator endpoints), computes RSI/MACD/Bollinger Bands locally,
-// and upserts into the same `quotes` table used by the intraday quote refresh.
+// Runs once daily after US market close. For each symbol: ONE time_series call, from
+// which it derives price, daily change, volume AND every indicator (RSI, MACD,
+// Bollinger, ATR, ADX, SMAs, WMA, Donchian), then upserts a single row into `quotes`
+// and appends one row to `quotes_history`. This replaced the old two-job setup
+// (separate quote job + indicators job), which paid for the same data twice.
 //
 // npm install technicalindicators @supabase/supabase-js
 
@@ -55,6 +57,7 @@ async function fetchTimeSeries(symbol) {
     closes: values.map((v) => parseFloat(v.close)),
     highs: values.map((v) => parseFloat(v.high)),
     lows: values.map((v) => parseFloat(v.low)),
+    volumes: values.map((v) => parseInt(v.volume, 10)),
   };
 }
 
@@ -153,9 +156,22 @@ export default async function handler(req, res) {
       try {
         const series = await fetchTimeSeries(symbol);
         const indicators = computeIndicators(series);
+
+        // Price fields come straight from the same bars used for the indicators —
+        // this is what the separate quote job (cron-refresh.js) used to do with a
+        // second API call per symbol.
+        const price = series.closes.at(-1);
+        const prevClose = series.closes.length > 1 ? series.closes.at(-2) : null;
+        const change = prevClose != null ? price - prevClose : null;
+        const percentChange = prevClose ? ((price - prevClose) / prevClose) * 100 : null;
+        const volume = series.volumes.at(-1);
+
         results.push({
           symbol,
-          latest_close: series.closes.at(-1),
+          price,
+          change,
+          percent_change: percentChange,
+          volume: Number.isFinite(volume) ? volume : null,
           ...indicators,
           updated_at: new Date().toISOString(),
         });
@@ -165,19 +181,16 @@ export default async function handler(req, res) {
     }
 
     if (results.length > 0) {
-      // Upsert into `quotes` — merges with the price/volume columns the intraday job already wrote.
-      // Strip latest_close first since it's not a column on `quotes` (that table gets its
-      // price from the intraday quote job instead).
-      const quotesRows = results.map(({ latest_close, ...rest }) => rest);
-      const { error: upsertError } = await supabase.from("quotes").upsert(quotesRows);
+      // One upsert now carries everything: price/volume plus all indicators.
+      const { error: upsertError } = await supabase.from("quotes").upsert(results);
       if (upsertError) throw upsertError;
 
-      // Append to quotes_history — the daily dataset this job exists to build.
-      // Unlike the intraday job (price only), this row carries the full indicator
-      // snapshot so backtesting later has RSI/MACD alongside price on the same date.
+      // Append to quotes_history — now the ONLY writer, so exactly one row per
+      // symbol per run (the old setup wrote two: a price-only row from the quote
+      // job and a price+RSI/MACD row from this one).
       const historyRows = results.map((r) => ({
         symbol: r.symbol,
-        price: r.latest_close,
+        price: r.price,
         rsi: r.rsi,
         macd: r.macd,
         recorded_at: r.updated_at,
