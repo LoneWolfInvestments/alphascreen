@@ -10,6 +10,7 @@ import PortfolioAllocation from "./components/PortfolioAllocation";
 import Positioning from "./components/Positioning";
 import Mag7 from "./components/Mag7";
 import AiAnalyst from "./components/AiAnalyst";
+import AuthBar from "./components/AuthBar";
 
 const TABS = [
   { key: "opportunities", label: "Opportunities", Component: Opportunities },
@@ -31,6 +32,7 @@ export default function App() {
     <div>
       <header>
         <h1>Alpha<span>Screen</span></h1>
+        <AuthBar />
       </header>
       <nav>
         {TABS.map((t) => (

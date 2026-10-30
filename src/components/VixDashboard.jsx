@@ -1,6 +1,8 @@
 // src/components/VixDashboard.jsx
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "../lib/supabaseClient";
+import { ownerFetch } from "../lib/ownerFetch";
+import { ownerMutationFailed } from "../lib/ownerMutation";
 
 export default function VixDashboard() {
   const [vix, setVix] = useState("");
@@ -24,7 +26,10 @@ export default function VixDashboard() {
     const v = parseFloat(vix);
     const m = parseFloat(ma);
     if (isNaN(v) || isNaN(m)) return;
-    await supabase.from("vix_snapshot").upsert({ id: true, vix: v, ma30: m, updated_at: new Date().toISOString() });
+    const failed = await ownerMutationFailed(
+      supabase.from("vix_snapshot").upsert({ id: true, vix: v, ma30: m, updated_at: new Date().toISOString() })
+    );
+    if (failed) return;
     setSaved({ vix: v, ma30: m });
   };
 
@@ -32,16 +37,16 @@ export default function VixDashboard() {
     setFetchingLive(true);
     setLiveError(null);
     try {
-      const quoteRes = await fetch("/api/quote?symbol=VIX&endpoint=quote");
+      const quoteRes = await ownerFetch("/api/quote?symbol=VIX&endpoint=quote");
       const quoteData = await quoteRes.json();
-      if (quoteData.error || quoteData.status === "error") {
+      if (!quoteRes.ok || quoteData.error || quoteData.status === "error") {
         throw new Error(quoteData.error || quoteData.message || "VIX not available on this plan");
       }
       const currentVix = parseFloat(quoteData.close);
 
-      const seriesRes = await fetch("/api/quote?symbol=VIX&endpoint=time_series&outputsize=30");
+      const seriesRes = await ownerFetch("/api/quote?symbol=VIX&endpoint=time_series&outputsize=30");
       const seriesData = await seriesRes.json();
-      if (seriesData.error || seriesData.status === "error" || !seriesData.values) {
+      if (!seriesRes.ok || seriesData.error || seriesData.status === "error" || !seriesData.values) {
         throw new Error(seriesData.error || seriesData.message || "VIX history not available on this plan");
       }
       const closes = seriesData.values.map((v) => parseFloat(v.close));
@@ -49,12 +54,17 @@ export default function VixDashboard() {
 
       setVix(currentVix.toFixed(2));
       setMa(avg30.toFixed(2));
-      await supabase.from("vix_snapshot").upsert({
+      const failed = await ownerMutationFailed(supabase.from("vix_snapshot").upsert({
         id: true, vix: currentVix, ma30: avg30, updated_at: new Date().toISOString(),
-      });
+      }));
+      if (failed) return;
       setSaved({ vix: currentVix, ma30: avg30 });
     } catch (err) {
-      setLiveError(err.message + " — your Twelve Data plan may not include index data. Manual entry below still works fine.");
+      const message = err.message || "Could not fetch VIX";
+      const needsSignIn = /sign in/i.test(message);
+      setLiveError(needsSignIn
+        ? message
+        : message + " — your Twelve Data plan may not include index data. Manual entry below still works fine.");
     } finally {
       setFetchingLive(false);
     }

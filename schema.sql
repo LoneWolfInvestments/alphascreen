@@ -39,12 +39,17 @@ create table if not exists quotes_history (
 
 -- Row-level security: allow public read (quotes are non-sensitive market data),
 -- restrict writes to the service role (used only by your server-side cron function).
+-- schema-rls-lockdown.sql is the file to re-run when you want to reset policies.
+-- Do not add write policies for the anon key.
 alter table watchlist enable row level security;
 alter table quotes enable row level security;
 alter table quotes_history enable row level security;
 
+drop policy if exists "public read watchlist" on watchlist;
 create policy "public read watchlist" on watchlist for select using (true);
+drop policy if exists "public read quotes" on quotes;
 create policy "public read quotes" on quotes for select using (true);
+drop policy if exists "public read quotes_history" on quotes_history;
 create policy "public read quotes_history" on quotes_history for select using (true);
 
 -- Seed a starter watchlist — edit/add your own symbols

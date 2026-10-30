@@ -1,6 +1,7 @@
 // src/components/FundamentalScreener.jsx
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "../lib/supabaseClient";
+import { ownerMutationFailed } from "../lib/ownerMutation";
 
 function signalFromBreadth(breadth) {
   if (breadth == null) return { label: "No data", color: "#8b93a7" };
@@ -37,15 +38,16 @@ export default function FundamentalScreener() {
 
   const addTicker = async () => {
     if (!ticker.trim()) return;
-    await supabase.from("fundamental_scores").upsert({
+    const failed = await ownerMutationFailed(supabase.from("fundamental_scores").upsert({
       ticker: ticker.trim().toUpperCase(),
       updated_at: new Date().toISOString(),
-    });
+    }));
+    if (failed) return;
     setTicker("");
   };
 
   const removeRow = async (t) => {
-    await supabase.from("fundamental_scores").delete().eq("ticker", t);
+    await ownerMutationFailed(supabase.from("fundamental_scores").delete().eq("ticker", t));
   };
 
   const sorted = [...rows].sort((a, b) => (b.inst_net_breadth || 0) - (a.inst_net_breadth || 0));

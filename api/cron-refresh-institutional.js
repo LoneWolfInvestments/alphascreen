@@ -13,6 +13,7 @@
 // the 2 req/s rate limit and Vercel's 10-second function timeout.
 
 import { createClient } from "@supabase/supabase-js";
+import { rejectIfCronUnauthorized } from "../server/cronAuth.js";
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 
@@ -40,10 +41,7 @@ async function fetchInstitutionalData(ticker) {
 }
 
 export default async function handler(req, res) {
-  const authHeader = req.headers["authorization"];
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
+  if (rejectIfCronUnauthorized(req, res)) return;
   if (!process.env.OANOR_API_KEY) {
     return res.status(500).json({ error: "OANOR_API_KEY not configured" });
   }

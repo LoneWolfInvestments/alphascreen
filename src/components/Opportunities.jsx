@@ -1,6 +1,7 @@
 // src/components/Opportunities.jsx
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "../lib/supabaseClient";
+import { useOwnerSession } from "../hooks/useOwnerSession";
 
 function fundamentalRead(f) {
   if (!f) return { score: null, sig: null, reasons: [] };
@@ -86,6 +87,7 @@ function earningsReason(dateStr) {
 }
 
 export default function Opportunities() {
+  const { ready, session } = useOwnerSession();
   const [fundamental, setFundamental] = useState([]);
   const [quotes, setQuotes] = useState([]);
   const [portfolio, setPortfolio] = useState([]);
@@ -102,12 +104,13 @@ export default function Opportunities() {
   }, []);
 
   useEffect(() => {
+    if (!ready) return undefined;
     loadAll();
     const c1 = supabase.channel("opp-fundamental").on("postgres_changes", { event: "*", schema: "public", table: "fundamental_scores" }, loadAll).subscribe();
     const c2 = supabase.channel("opp-quotes").on("postgres_changes", { event: "*", schema: "public", table: "quotes" }, loadAll).subscribe();
     const c3 = supabase.channel("opp-portfolio").on("postgres_changes", { event: "*", schema: "public", table: "portfolio" }, loadAll).subscribe();
     return () => { supabase.removeChannel(c1); supabase.removeChannel(c2); supabase.removeChannel(c3); };
-  }, [loadAll]);
+  }, [loadAll, ready, session?.user?.id]);
 
   const tickers = Array.from(new Set([
     ...fundamental.map((r) => r.ticker),
@@ -174,6 +177,7 @@ export default function Opportunities() {
         "Add to Existing" surface where fundamentals and technicals agree bullish. "Review Position" flags names you
         hold that are now showing a bearish signal. This is a triage tool, not a trade instruction — check the reasoning
         column before acting on anything.
+        {ready && !session ? " Sign in so positions you already hold are marked as held." : ""}
       </p>
 
       {categories.map((cat) => {

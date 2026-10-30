@@ -1,5 +1,6 @@
 // src/components/AiAnalyst.jsx
 import React, { useState, useRef } from "react";
+import { ownerFetch } from "../lib/ownerFetch";
 
 export default function AiAnalyst() {
   const [messages, setMessages] = useState([]);
@@ -15,7 +16,7 @@ export default function AiAnalyst() {
     setLoading(true);
 
     try {
-      const res = await fetch("/api/ask-analyst", {
+      const res = await ownerFetch("/api/ask-analyst", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question }),
