@@ -9,7 +9,6 @@ import VixDashboard from "./components/VixDashboard";
 import PortfolioAllocation from "./components/PortfolioAllocation";
 import Positioning from "./components/Positioning";
 import Mag7 from "./components/Mag7";
-import AiAnalyst from "./components/AiAnalyst";
 import AuthBar from "./components/AuthBar";
 
 const TABS = [
@@ -21,7 +20,6 @@ const TABS = [
   { key: "vix", label: "VIX Dashboard", Component: VixDashboard },
   { key: "portfolio", label: "Portfolio Allocation", Component: PortfolioAllocation },
   { key: "positioning", label: "Positioning / Bottleneck", Component: Positioning },
-  { key: "ai", label: "AI Analyst", Component: AiAnalyst },
 ];
 
 export default function App() {

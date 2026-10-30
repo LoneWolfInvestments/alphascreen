@@ -1,6 +1,6 @@
 import { supabase } from "./supabaseClient";
 
-// fetch() with the owner's Supabase access token, for /api/ask-analyst and /api/quote.
+// fetch() with the owner's Supabase access token, for /api/quote.
 export async function ownerFetch(url, options = {}) {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
