@@ -16,22 +16,6 @@ function mockRes() {
   };
 }
 
-test("ask-analyst rejects anonymous callers and oversized bodies", async () => {
-  const { default: handler } = await import("../api/ask-analyst.js");
-
-  const missingAuth = mockRes();
-  await handler({ method: "POST", headers: {}, body: { question: "Bear case for NVDA?" } }, missingAuth);
-  assert.equal(missingAuth.statusCode, 401);
-
-  const tooBig = mockRes();
-  await handler({ method: "POST", headers: { "content-length": "99999" }, body: {} }, tooBig);
-  assert.equal(tooBig.statusCode, 413);
-
-  const wrongMethod = mockRes();
-  await handler({ method: "GET", headers: {} }, wrongMethod);
-  assert.equal(wrongMethod.statusCode, 405);
-});
-
 test("quote rejects anonymous callers before using Twelve Data", async () => {
   const { default: handler } = await import("../api/quote.js");
 

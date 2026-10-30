@@ -38,10 +38,6 @@ button.action.danger { background: var(--red); padding: 4px 8px; font-size: 11px
 .add-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; margin-bottom: 12px; }
 .add-form label { display: block; font-size: 11px; color: var(--text-dim); margin-bottom: 3px; }
 .field { min-width: 90px; }
-.chat-log { max-height: 340px; overflow-y: auto; margin-bottom: 12px; }
-.chat-msg { padding: 10px 12px; border-radius: 6px; margin-bottom: 8px; font-size: 13px; line-height: 1.5; }
-.chat-msg.user { background: var(--panel-alt); }
-.chat-msg.ai { background: rgba(79,141,253,0.08); border: 1px solid rgba(79,141,253,0.2); white-space: pre-wrap; }
 .empty { color: var(--text-dim); font-style: italic; padding: 20px; text-align: center; }
 .sync-note { font-size: 11px; color: var(--text-dim); }
 .disclaimer { font-size: 11px; color: var(--text-dim); border-top: 1px solid var(--border); padding-top: 10px; margin-top: 10px; }

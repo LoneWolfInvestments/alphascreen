@@ -60,7 +60,7 @@ export default function AuthBar() {
       </button>
       {status
         ? <span className="auth-note">{status}</span>
-        : <span className="auth-note">Sign in to edit your portfolio and use the AI analyst.</span>}
+        : <span className="auth-note">Sign in to edit your portfolio.</span>}
     </div>
   );
 }
