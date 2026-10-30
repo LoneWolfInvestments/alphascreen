@@ -2,6 +2,9 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "../lib/supabaseClient";
 import { useOwnerSession } from "../hooks/useOwnerSession";
+import { earningsDateFor, useEarningsMap } from "../hooks/useEarningsMap";
+import { formatDay, isEarningsSoon, nyToday, tradingDaysUntil } from "../lib/sellSignals";
+import EarningsDate from "./EarningsDate";
 
 // ---- Fundamental side: institutional breadth + analyst rating combined ----
 function fundamentalRead(f) {
@@ -66,11 +69,13 @@ function technicalRead(q) {
   return { sig, caveats };
 }
 
-function earningsCaveat(dateStr) {
+function earningsCaveat(dateStr, today) {
   if (!dateStr) return null;
-  const days = Math.round((new Date(dateStr) - new Date()) / (1000 * 60 * 60 * 24));
-  if (days < 0 || days > 14) return null;
-  return `Earnings in ${days}d`;
+  const pretty = formatDay(dateStr);
+  if (!isEarningsSoon(dateStr, today)) return pretty ? `Earnings ${pretty}` : null;
+  const days = tradingDaysUntil(today, dateStr);
+  const when = days === 0 ? "today" : `in ${days} trading day${days === 1 ? "" : "s"}`;
+  return `Earnings ${pretty} (${when}) — skip new buys`;
 }
 
 function confluenceRead(fSig, tSig) {
@@ -84,6 +89,8 @@ function confluenceRead(fSig, tSig) {
 
 export default function Overview() {
   const { ready, session } = useOwnerSession();
+  const { bySymbol } = useEarningsMap();
+  const today = nyToday();
   const [fundamental, setFundamental] = useState([]);
   const [quotes, setQuotes] = useState([]);
   const [portfolio, setPortfolio] = useState([]);
@@ -126,10 +133,11 @@ export default function Overview() {
     const confluence = confluenceRead(fSig, tSig);
 
     const caveats = [...tCaveats];
-    const earnCaveat = earningsCaveat(f?.next_earnings_date);
+    const earnDate = earningsDateFor(bySymbol, ticker, f?.next_earnings_date);
+    const earnCaveat = earningsCaveat(earnDate, today);
     if (earnCaveat) caveats.push(earnCaveat);
 
-    return { ticker, fScore, fSig, tSig, price: q?.price, rsi: q?.rsi, macd: q?.macd, confluence, caveats };
+    return { ticker, fScore, fSig, tSig, price: q?.price, rsi: q?.rsi, macd: q?.macd, confluence, caveats, earnDate, soon: isEarningsSoon(earnDate, today) };
   });
 
   const priority = { "Strong Buy confluence": 0, "Strong Sell confluence": 1, "Conflicting signals": 2, "Neutral / mixed": 3, "Partial data": 4, "No data": 5 };
@@ -150,14 +158,15 @@ export default function Overview() {
         <table>
           <thead>
             <tr>
-              <th>Ticker</th><th>Fundamental</th><th>Technical</th><th>Confluence</th>
+              <th>Ticker</th><th>Next earnings</th><th>Fundamental</th><th>Technical</th><th>Confluence</th>
               <th>Price</th><th>RSI</th><th>MACD</th><th>Caveats</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={r.ticker}>
-                <td><strong>{r.ticker}</strong></td>
+              <tr key={r.ticker} className={r.soon ? "earn-soon-row" : undefined}>
+                <td><strong className={r.soon ? "earn-soon" : undefined}>{r.ticker}</strong></td>
+                <td><EarningsDate date={r.earnDate} today={today} /></td>
                 <td>{r.fSig ? `${r.fSig}${r.fScore != null ? ` (${r.fScore})` : ""}` : "—"}</td>
                 <td>{r.tSig || "—"}</td>
                 <td>

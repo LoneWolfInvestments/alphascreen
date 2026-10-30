@@ -5,6 +5,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { rejectIfCronUnauthorized } from "../server/cronAuth.js";
+import { isMissingEarningsTableError } from "../server/earningsCalendar.js";
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 
@@ -78,6 +79,15 @@ export default async function handler(req, res) {
           analyst_rating: rating,
           updated_at: new Date().toISOString(),
         }).eq("ticker", ticker);
+        // Same earnings date the call above already fetched. Best-effort so a
+        // project that has not run schema-sell-signals.sql yet still updates
+        // the screener.
+        const { error: calendarError } = await supabase.from("earnings_calendar").upsert({
+          symbol: ticker,
+          next_earnings_date: nextEarnings,
+          updated_at: new Date().toISOString(),
+        });
+        if (calendarError && !isMissingEarningsTableError(calendarError)) throw calendarError;
         results.push(ticker);
       } catch (err) {
         failed.push({ ticker, error: err.message });

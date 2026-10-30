@@ -9,6 +9,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { rejectIfCronUnauthorized } from "../server/cronAuth.js";
+import { computeSellLevels, isMissingSellColumnError, withoutSellColumns } from "../server/computeSellLevels.js";
 import { RSI, MACD, BollingerBands, ATR, ADX, SMA, WMA } from "technicalindicators";
 
 const supabase = createClient(
@@ -59,6 +60,7 @@ async function fetchTimeSeries(symbol) {
     highs: values.map((v) => parseFloat(v.high)),
     lows: values.map((v) => parseFloat(v.low)),
     volumes: values.map((v) => parseInt(v.volume, 10)),
+    dates: values.map((v) => String(v.datetime || "").slice(0, 10)),
   };
 }
 
@@ -146,6 +148,7 @@ export default async function handler(req, res) {
 
     const results = [];
     const failed = [];
+    let sellColumnsMissing = false;
 
     // Twelve Data free tier: 8 credits/minute. Spacing requests ~4s apart keeps us
     // to about 15/minute worst case within a shard, safely under that per-symbol,
@@ -154,6 +157,9 @@ export default async function handler(req, res) {
       try {
         const series = await fetchTimeSeries(symbol);
         const indicators = computeIndicators(series);
+        // Chandelier stop, ATR(22), and the 50-day streak come from these same
+        // bars. This does not add a Twelve Data call.
+        const sellLevels = computeSellLevels(series);
 
         // Price fields come straight from the same bars used for the indicators —
         // this is what the separate quote job (cron-refresh.js) used to do with a
@@ -171,6 +177,8 @@ export default async function handler(req, res) {
           percent_change: percentChange,
           volume: Number.isFinite(volume) ? volume : null,
           ...indicators,
+          ...sellLevels,
+          bar_date: series.dates.at(-1) || null,
           updated_at: new Date().toISOString(),
         });
       } catch (err) {
@@ -180,7 +188,15 @@ export default async function handler(req, res) {
 
     if (results.length > 0) {
       // One upsert now carries everything: price/volume plus all indicators.
-      const { error: upsertError } = await supabase.from("quotes").upsert(results);
+      // If the sell-signal columns are not in the database yet, save the old
+      // payload so this job keeps updating prices until schema-sell-signals.sql
+      // has been run.
+      let { error: upsertError } = await supabase.from("quotes").upsert(results);
+      if (upsertError && isMissingSellColumnError(upsertError)) {
+        sellColumnsMissing = true;
+        const retry = await supabase.from("quotes").upsert(results.map(withoutSellColumns));
+        upsertError = retry.error;
+      }
       if (upsertError) throw upsertError;
 
       // Append to quotes_history — now the ONLY writer, so exactly one row per
@@ -203,6 +219,7 @@ export default async function handler(req, res) {
       updated: results.length,
       failed,
       total: myShare.length,
+      sellColumnsMissing,
     });
   } catch (err) {
     return res.status(500).json({ error: "Indicator refresh failed", detail: err.message });

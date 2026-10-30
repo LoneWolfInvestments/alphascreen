@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
+import { previewSample } from "../lib/previewSample";
 
 // ready is false until we know whether a session is stored.
 // Wait for that before reading the portfolio, or the first request goes out
@@ -8,6 +9,10 @@ export function useOwnerSession() {
   const [state, setState] = useState({ ready: false, session: null });
 
   useEffect(() => {
+    if (previewSample()) {
+      setState({ ready: true, session: null });
+      return undefined;
+    }
     let active = true;
     supabase.auth.getSession().then(({ data }) => {
       if (active) setState({ ready: true, session: data.session ?? null });

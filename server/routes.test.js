@@ -38,4 +38,15 @@ test("cron fails closed when CRON_SECRET is unset, even for Bearer undefined", a
   await handler({ headers: { authorization: "Bearer undefined" }, query: {} }, res);
   assert.equal(res.statusCode, 401);
   assert.equal(res.body.error, "Unauthorized");
+
+  const { default: earnings } = await import("../api/cron-refresh-earnings.js");
+  const earningsRes = mockRes();
+  await earnings({ headers: { authorization: "Bearer undefined" }, query: {} }, earningsRes);
+  assert.equal(earningsRes.statusCode, 401);
+  assert.equal(earningsRes.body.error, "Unauthorized");
+
+  const { default: indicators } = await import("../api/cron-refresh-indicators.js");
+  const indicatorsRes = mockRes();
+  await indicators({ headers: {}, query: {} }, indicatorsRes);
+  assert.equal(indicatorsRes.statusCode, 401);
 });
