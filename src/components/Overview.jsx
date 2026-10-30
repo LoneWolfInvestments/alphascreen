@@ -4,6 +4,7 @@ import { supabase } from "../lib/supabaseClient";
 import { useOwnerSession } from "../hooks/useOwnerSession";
 import { earningsDateFor, useEarningsMap } from "../hooks/useEarningsMap";
 import { formatDay, isEarningsSoon, nyToday, tradingDaysUntil } from "../lib/sellSignals";
+import { technicalReadFromQuote } from "../lib/swingSetups";
 import EarningsDate from "./EarningsDate";
 
 // ---- Fundamental side: institutional breadth + analyst rating combined ----
@@ -25,48 +26,8 @@ function fundamentalRead(f) {
   return { score, sig };
 }
 
-// ---- Technical side: RSI + MACD + SMA cross + Donchian breakout position ----
 function technicalRead(q) {
-  if (!q) return { sig: null, caveats: [] };
-  let score = 0;
-  let hasData = false;
-  const caveats = [];
-
-  if (q.rsi != null) {
-    hasData = true;
-    if (q.rsi < 35) score += 1;
-    if (q.rsi > 65) score -= 1;
-  }
-  if (q.macd != null) {
-    hasData = true;
-    score += q.macd > 0 ? 1 : -1;
-  }
-  if (q.sma_50 != null && q.sma_200 != null) {
-    hasData = true;
-    score += q.sma_50 > q.sma_200 ? 1 : -1;
-  }
-  if (q.price != null && q.wma_200 != null) {
-    hasData = true;
-    score += q.price >= q.wma_200 ? 1 : -1;
-  }
-  if (q.price != null && q.donchian_upper != null && q.donchian_lower != null && q.donchian_upper !== q.donchian_lower) {
-    hasData = true;
-    const pos = (q.price - q.donchian_lower) / (q.donchian_upper - q.donchian_lower);
-    if (pos > 0.9) score += 1;
-    else if (pos < 0.1) score -= 1;
-  }
-
-  // Caveats — context that changes how much to trust the signal, not the direction itself
-  if (q.adx != null) {
-    if (q.adx < 20) caveats.push(`ADX ${q.adx.toFixed(0)}: weak trend, lower confidence`);
-    else if (q.adx >= 25) caveats.push(`ADX ${q.adx.toFixed(0)}: confirmed trend`);
-  }
-
-  if (!hasData) return { sig: null, caveats };
-  let sig = "Hold";
-  if (score >= 3) sig = "Buy";
-  else if (score <= -3) sig = "Sell";
-  return { sig, caveats };
+  return technicalReadFromQuote(q);
 }
 
 function earningsCaveat(dateStr, today) {
@@ -129,7 +90,7 @@ export default function Overview() {
     const q = quotes.find((r) => r.symbol === ticker);
 
     const { score: fScore, sig: fSig } = fundamentalRead(f);
-    const { sig: tSig, caveats: tCaveats } = technicalRead(q);
+    const { sig: tSig, label: tLabel, caveats: tCaveats } = technicalRead(q);
     const confluence = confluenceRead(fSig, tSig);
 
     const caveats = [...tCaveats];
@@ -137,7 +98,7 @@ export default function Overview() {
     const earnCaveat = earningsCaveat(earnDate, today);
     if (earnCaveat) caveats.push(earnCaveat);
 
-    return { ticker, fScore, fSig, tSig, price: q?.price, rsi: q?.rsi, macd: q?.macd, confluence, caveats, earnDate, soon: isEarningsSoon(earnDate, today) };
+    return { ticker, fScore, fSig, tSig, tLabel, price: q?.price, rsi: q?.rsi, macd: q?.macd, confluence, caveats, earnDate, soon: isEarningsSoon(earnDate, today) };
   });
 
   const priority = { "Strong Buy confluence": 0, "Strong Sell confluence": 1, "Conflicting signals": 2, "Neutral / mixed": 3, "Partial data": 4, "No data": 5 };
@@ -147,19 +108,18 @@ export default function Overview() {
     <div className="panel">
       <h2>Overview — Signal Confluence</h2>
       <p className="disclaimer" style={{ marginTop: 0, marginBottom: 12, borderTop: "none", paddingTop: 0 }}>
-        Fundamental combines institutional 13F breadth and analyst consensus. Technical combines RSI, MACD, 50/200 SMA
-        trend, and Donchian breakout position. ADX and upcoming earnings are shown as caveats — they affect how much
-        to trust a signal, not its direction. P/E, market cap, EPS, and margin are deliberately left out of the score
-        since they need sector/historical context to interpret and would create false precision if forced into it —
-        see the Fundamental Screener tab for those directly.
+        Fundamental combines institutional 13F breadth and analyst consensus. Technical is the swing setup from the
+        Technical Analysis tab: Breakout or Pullback counts as bullish, a downtrend counts as bearish, and an uptrend
+        with nothing to enter counts as a hold. RSI is only a warning. P/E, market cap, EPS, and margin stay on the
+        Fundamental Screener, where they have the context they need.
         {ready && !session ? " Sign in to include tickers that are only in your portfolio." : ""}
       </p>
       <div className="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>Ticker</th><th>Next earnings</th><th>Fundamental</th><th>Technical</th><th>Confluence</th>
-              <th>Price</th><th>RSI</th><th>MACD</th><th>Caveats</th>
+              <th>Ticker</th><th>Next earnings</th><th>Fundamental</th><th>Setup</th><th>Confluence</th>
+              <th>Price</th><th>RSI</th><th>MACD</th><th>Why</th>
             </tr>
           </thead>
           <tbody>
@@ -168,7 +128,7 @@ export default function Overview() {
                 <td><strong className={r.soon ? "earn-soon" : undefined}>{r.ticker}</strong></td>
                 <td><EarningsDate date={r.earnDate} today={today} /></td>
                 <td>{r.fSig ? `${r.fSig}${r.fScore != null ? ` (${r.fScore})` : ""}` : "—"}</td>
-                <td>{r.tSig || "—"}</td>
+                <td>{r.tLabel || "—"}</td>
                 <td>
                   <span className="badge" style={{ background: r.confluence.color + "26", color: r.confluence.color }}>
                     {r.confluence.label}
@@ -177,7 +137,7 @@ export default function Overview() {
                 <td>{r.price != null ? Number(r.price).toFixed(2) : "—"}</td>
                 <td>{r.rsi != null ? Number(r.rsi).toFixed(1) : "—"}</td>
                 <td>{r.macd != null ? Number(r.macd).toFixed(2) : "—"}</td>
-                <td style={{ fontSize: 12, color: "#8b93a7" }}>{r.caveats.join(" · ") || "—"}</td>
+                <td className="wrap">{r.caveats.join(" ") || "—"}</td>
               </tr>
             ))}
           </tbody>

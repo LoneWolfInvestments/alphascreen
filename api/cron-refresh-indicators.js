@@ -1,134 +1,57 @@
 // api/cron-refresh-indicators.js
-// Runs once daily after US market close. For each symbol: ONE time_series call, from
-// which it derives price, daily change, volume AND every indicator (RSI, MACD,
-// Bollinger, ATR, ADX, SMAs, WMA, Donchian), then upserts a single row into `quotes`
-// and appends one row to `quotes_history`. This replaced the old two-job setup
-// (separate quote job + indicators job), which paid for the same data twice.
+// Once each weekday night, after the US close. For each symbol: ONE Twelve Data
+// time_series call. Those bars are upserted into daily_bars (keyed by the bar's
+// own date), then RSI, MACD, the chandelier exit, and the swing setup are
+// computed from the stored bars. SPY is downloaded once per night when it is
+// not already on the watchlist, and only on shard 0.
 //
-// npm install technicalindicators @supabase/supabase-js
+// Twelve Data free tier: 8 credits per minute, 1 credit per symbol. This waits
+// 8 seconds between calls. A shard that would run past the time budget skips
+// the rest; the next night those names go first because the stalest quotes
+// are refreshed first.
 
 import { createClient } from "@supabase/supabase-js";
 import { rejectIfCronUnauthorized } from "../server/cronAuth.js";
-import { computeSellLevels, isMissingSellColumnError, withoutSellColumns } from "../server/computeSellLevels.js";
-import { RSI, MACD, BollingerBands, ATR, ADX, SMA, WMA } from "technicalindicators";
+import { buildQuotePayload, historyRow, upsertQuotes } from "../server/buildQuote.js";
+import { loadDailyBars, upsertDailyBars } from "../server/dailyBarsStore.js";
+import { sleep } from "../server/earningsCalendar.js";
+import {
+  BENCHMARK_SYMBOL,
+  TWELVE_DATA_PAUSE_MS,
+  SHARD_TIME_BUDGET_MS,
+  canFetchAnother,
+  fetchTwelveDailyBars,
+  isMissingDailyBarsError,
+  queueForShard,
+} from "../server/twelveData.js";
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-const TWELVE_DATA_BASE = "https://api.twelvedata.com";
-
-// Standard parameter choices — change here if you want different periods
-const RSI_PERIOD = 14;
-const MACD_FAST = 12;
-const MACD_SLOW = 26;
-const MACD_SIGNAL = 9;
-const BBANDS_PERIOD = 20;
-const BBANDS_STDDEV = 2;
-const ATR_PERIOD = 14;
-const ADX_PERIOD = 14;
-const SMA_SHORT_PERIOD = 50;
-const SMA_LONG_PERIOD = 200;
-const DONCHIAN_PERIOD = 20;
-
-// Need enough bars for the slowest indicator — 200 SMA needs 200 bars, so this
-// is a meaningful jump from the 60 we used before. TESTING NEEDED: a larger
-// outputsize may cost more Twelve Data credits per call than the smaller
-// request did — verify with one shard before assuming this is free.
-const OUTPUT_SIZE = 210;
-
-async function fetchTimeSeries(symbol) {
-  const url = new URL(`${TWELVE_DATA_BASE}/time_series`);
-  url.searchParams.set("symbol", symbol);
-  url.searchParams.set("interval", "1day");
-  url.searchParams.set("outputsize", String(OUTPUT_SIZE));
-  url.searchParams.set("apikey", process.env.TWELVE_DATA_API_KEY);
-
-  const res = await fetch(url.toString());
-  const data = await res.json();
-
-  if (data.status === "error" || !data.values) {
-    throw new Error(data.message || `No time series data for ${symbol}`);
-  }
-
-  // Twelve Data returns newest-first; indicators need oldest-first chronological order.
-  // ATR/ADX also need high/low, so pull all three here rather than a second API call.
-  const values = data.values.slice().reverse();
-  return {
-    closes: values.map((v) => parseFloat(v.close)),
-    highs: values.map((v) => parseFloat(v.high)),
-    lows: values.map((v) => parseFloat(v.low)),
-    volumes: values.map((v) => parseInt(v.volume, 10)),
-    dates: values.map((v) => String(v.datetime || "").slice(0, 10)),
-  };
+async function stalestFirst(symbols) {
+  if (!symbols.length) return symbols;
+  const { data, error } = await supabase.from("quotes").select("symbol, updated_at").in("symbol", symbols);
+  if (error) return pinBenchmark(symbols);
+  const updated = new Map((data || []).map((row) => [row.symbol, row.updated_at || ""]));
+  const sorted = [...symbols].sort((a, b) => {
+    const au = updated.get(a) || "";
+    const bu = updated.get(b) || "";
+    if (au !== bu) return au < bu ? -1 : 1;
+    return a.localeCompare(b);
+  });
+  return pinBenchmark(sorted);
 }
 
-function computeIndicators({ closes, highs, lows }) {
-  const rsiValues = RSI.calculate({ period: RSI_PERIOD, values: closes });
-  const macdValues = MACD.calculate({
-    fastPeriod: MACD_FAST,
-    slowPeriod: MACD_SLOW,
-    signalPeriod: MACD_SIGNAL,
-    values: closes,
-    SimpleMAOscillator: false,
-    SimpleMASignal: false,
-  });
-  const bbandsValues = BollingerBands.calculate({
-    period: BBANDS_PERIOD,
-    values: closes,
-    stdDev: BBANDS_STDDEV,
-  });
-  const atrValues = ATR.calculate({ period: ATR_PERIOD, high: highs, low: lows, close: closes });
-  const adxValues = ADX.calculate({ period: ADX_PERIOD, close: closes, high: highs, low: lows });
-  const sma50Values = SMA.calculate({ period: SMA_SHORT_PERIOD, values: closes });
-  const sma200Values = SMA.calculate({ period: SMA_LONG_PERIOD, values: closes });
-  const wma200Values = WMA.calculate({ period: SMA_LONG_PERIOD, values: closes });
-
-  // Donchian Channels: not in the technicalindicators package, so computed
-  // directly — upper = highest high, lower = lowest low, over the lookback period.
-  const donchianSlice = closes.length >= DONCHIAN_PERIOD
-    ? { highs: highs.slice(-DONCHIAN_PERIOD), lows: lows.slice(-DONCHIAN_PERIOD) }
-    : null;
-  const donchianUpper = donchianSlice ? Math.max(...donchianSlice.highs) : null;
-  const donchianLower = donchianSlice ? Math.min(...donchianSlice.lows) : null;
-  const donchianMiddle = (donchianUpper != null && donchianLower != null) ? (donchianUpper + donchianLower) / 2 : null;
-
-  // Each array is shorter than `closes` since indicators need a warmup window —
-  // the last element is the most recent computed value.
-  const latestRsi = rsiValues.at(-1);
-  const latestMacd = macdValues.at(-1);
-  const latestBbands = bbandsValues.at(-1);
-  const latestAtr = atrValues.at(-1);
-  const latestAdx = adxValues.at(-1);
-
-  return {
-    rsi: latestRsi ?? null,
-    macd: latestMacd?.MACD ?? null,
-    macd_signal: latestMacd?.signal ?? null,
-    bb_upper: latestBbands?.upper ?? null,
-    bb_middle: latestBbands?.middle ?? null,
-    bb_lower: latestBbands?.lower ?? null,
-    atr: latestAtr ?? null,
-    adx: latestAdx?.adx ?? null,
-    sma_50: sma50Values.at(-1) ?? null,
-    sma_200: sma200Values.at(-1) ?? null,
-    wma_200: wma200Values.at(-1) ?? null,
-    donchian_upper: donchianUpper,
-    donchian_lower: donchianLower,
-    donchian_middle: donchianMiddle,
-  };
+function pinBenchmark(symbols) {
+  if (!symbols.includes(BENCHMARK_SYMBOL)) return symbols;
+  return [BENCHMARK_SYMBOL, ...symbols.filter((symbol) => symbol !== BENCHMARK_SYMBOL)];
 }
 
 export default async function handler(req, res) {
   if (rejectIfCronUnauthorized(req, res)) return;
 
-  // This job is split into shards to respect Twelve Data's free-tier rate limit
-  // (8 API credits/minute) AND Vercel's 10-second function timeout on the Hobby plan —
-  // both mean we can't fetch a large watchlist sequentially in one run.
-  // ?shard=0&shards=7 processes every 7th symbol starting at index 0.
-  // vercel.json triggers each shard a couple of minutes apart so the per-minute
-  // rate limit resets between batches.
   const shard = parseInt(req.query.shard, 10) || 0;
   const totalShards = parseInt(req.query.shards, 10) || 1;
 
@@ -137,78 +60,81 @@ export default async function handler(req, res) {
       .from("watchlist")
       .select("symbol")
       .eq("active", true)
-      .order("symbol", { ascending: true }); // stable order so sharding is consistent run to run
+      .order("symbol", { ascending: true });
 
     if (watchlistError) throw watchlistError;
     if (!watchlist || watchlist.length === 0) {
       return res.status(200).json({ message: "Watchlist is empty, nothing to refresh" });
     }
 
-    const myShare = watchlist.filter((_, i) => i % totalShards === shard);
+    const listed = new Set(watchlist.map((row) => row.symbol));
+    const queue = await stalestFirst(queueForShard(watchlist.map((row) => row.symbol), shard, totalShards));
 
-    const results = [];
+    const started = Date.now();
+    const fetched = [];
     const failed = [];
-    let sellColumnsMissing = false;
+    const deferred = [];
+    let calls = 0;
+    let dailyBarsMissing = false;
 
-    // Twelve Data free tier: 8 credits/minute. Spacing requests ~4s apart keeps us
-    // to about 15/minute worst case within a shard, safely under that per-symbol,
-    // and each shard is small enough to finish inside Vercel's 10s function limit.
-    for (const { symbol } of myShare) {
+    for (let index = 0; index < queue.length; index += 1) {
+      const symbol = queue[index];
+      if (!canFetchAnother({ startedAt: started, now: Date.now(), callsSoFar: calls })) {
+        deferred.push(...queue.slice(index));
+        break;
+      }
+      if (calls > 0) await sleep(TWELVE_DATA_PAUSE_MS);
+      calls += 1;
       try {
-        const series = await fetchTimeSeries(symbol);
-        const indicators = computeIndicators(series);
-        // Chandelier stop, ATR(22), and the 50-day streak come from these same
-        // bars. This does not add a Twelve Data call.
-        const sellLevels = computeSellLevels(series);
-
-        // Price fields come straight from the same bars used for the indicators —
-        // this is what the separate quote job (cron-refresh.js) used to do with a
-        // second API call per symbol.
-        const price = series.closes.at(-1);
-        const prevClose = series.closes.length > 1 ? series.closes.at(-2) : null;
-        const change = prevClose != null ? price - prevClose : null;
-        const percentChange = prevClose ? ((price - prevClose) / prevClose) * 100 : null;
-        const volume = series.volumes.at(-1);
-
-        results.push({
-          symbol,
-          price,
-          change,
-          percent_change: percentChange,
-          volume: Number.isFinite(volume) ? volume : null,
-          ...indicators,
-          ...sellLevels,
-          bar_date: series.dates.at(-1) || null,
-          updated_at: new Date().toISOString(),
-        });
+        const bars = await fetchTwelveDailyBars(symbol);
+        if (!dailyBarsMissing) {
+          const saved = await upsertDailyBars(supabase, symbol, bars);
+          if (saved.error && isMissingDailyBarsError(saved.error)) dailyBarsMissing = true;
+          else if (saved.error) throw saved.error;
+        }
+        fetched.push({ symbol, bars });
       } catch (err) {
         failed.push({ symbol, error: err.message });
       }
     }
 
-    if (results.length > 0) {
-      // One upsert now carries everything: price/volume plus all indicators.
-      // If the sell-signal columns are not in the database yet, save the old
-      // payload so this job keeps updating prices until schema-sell-signals.sql
-      // has been run.
-      let { error: upsertError } = await supabase.from("quotes").upsert(results);
-      if (upsertError && isMissingSellColumnError(upsertError)) {
-        sellColumnsMissing = true;
-        const retry = await supabase.from("quotes").upsert(results.map(withoutSellColumns));
-        upsertError = retry.error;
-      }
-      if (upsertError) throw upsertError;
+    let spyBars = [];
+    if (!dailyBarsMissing) {
+      const storedSpy = await loadDailyBars(supabase, BENCHMARK_SYMBOL);
+      if (storedSpy.error && isMissingDailyBarsError(storedSpy.error)) dailyBarsMissing = true;
+      else if (storedSpy.error) throw storedSpy.error;
+      else spyBars = storedSpy.bars;
+    }
+    if (!spyBars.length) {
+      const memory = fetched.find((item) => item.symbol === BENCHMARK_SYMBOL);
+      if (memory) spyBars = memory.bars;
+    }
 
-      // Append to quotes_history — now the ONLY writer, so exactly one row per
-      // symbol per run (the old setup wrote two: a price-only row from the quote
-      // job and a price+RSI/MACD row from this one).
-      const historyRows = results.map((r) => ({
-        symbol: r.symbol,
-        price: r.price,
-        rsi: r.rsi,
-        macd: r.macd,
-        recorded_at: r.updated_at,
+    const results = [];
+    for (const item of fetched) {
+      if (!listed.has(item.symbol)) continue;
+      let bars = item.bars;
+      if (!dailyBarsMissing) {
+        const stored = await loadDailyBars(supabase, item.symbol);
+        if (stored.error) throw stored.error;
+        if (stored.bars.length) bars = stored.bars;
+      }
+      results.push(buildQuotePayload({
+        symbol: item.symbol,
+        bars,
+        spyBars: item.symbol === BENCHMARK_SYMBOL ? bars : spyBars,
       }));
+    }
+
+    let sellColumnsMissing = false;
+    let setupColumnsMissing = false;
+    if (results.length > 0) {
+      const saved = await upsertQuotes(supabase, results);
+      if (saved.error) throw saved.error;
+      sellColumnsMissing = saved.sellColumnsMissing;
+      setupColumnsMissing = saved.setupColumnsMissing;
+
+      const historyRows = results.map(historyRow);
       const { error: historyError } = await supabase.from("quotes_history").insert(historyRows);
       if (historyError) throw historyError;
     }
@@ -218,8 +144,15 @@ export default async function handler(req, res) {
       totalShards,
       updated: results.length,
       failed,
-      total: myShare.length,
+      deferred,
+      total: queue.length,
+      calls,
+      pauseMs: TWELVE_DATA_PAUSE_MS,
+      budgetMs: SHARD_TIME_BUDGET_MS,
+      dailyBarsMissing,
       sellColumnsMissing,
+      setupColumnsMissing,
+      benchmark: BENCHMARK_SYMBOL,
     });
   } catch (err) {
     return res.status(500).json({ error: "Indicator refresh failed", detail: err.message });
