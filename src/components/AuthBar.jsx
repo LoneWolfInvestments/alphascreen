@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 import { useOwnerSession } from "../hooks/useOwnerSession";
+import { previewSample } from "../lib/previewSample";
 
 export default function AuthBar() {
   const { ready, session } = useOwnerSession();
@@ -25,6 +26,14 @@ export default function AuthBar() {
     await supabase.auth.signOut();
     setStatus("");
   };
+
+  if (previewSample()) {
+    return (
+      <div className="auth-bar">
+        <span className="auth-note">Sample preview. This is not your portfolio.</span>
+      </div>
+    );
+  }
 
   if (!ready) {
     return (
@@ -60,7 +69,7 @@ export default function AuthBar() {
       </button>
       {status
         ? <span className="auth-note">{status}</span>
-        : <span className="auth-note">Sign in to edit your portfolio.</span>}
+        : <span className="auth-note">Sign in to see your portfolio and sell signals.</span>}
     </div>
   );
 }

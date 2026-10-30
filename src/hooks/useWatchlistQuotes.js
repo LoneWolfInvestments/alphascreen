@@ -4,6 +4,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "../lib/supabaseClient";
+import { previewSample } from "../lib/previewSample";
 
 export function useWatchlistQuotes() {
   const [quotes, setQuotes] = useState([]);
@@ -12,6 +13,12 @@ export function useWatchlistQuotes() {
   const [lastUpdated, setLastUpdated] = useState(null);
 
   const fetchQuotes = useCallback(async () => {
+    if (previewSample()) {
+      setQuotes([]);
+      setLoading(false);
+      setError(null);
+      return;
+    }
     setLoading(true);
     setError(null);
 
@@ -34,6 +41,10 @@ export function useWatchlistQuotes() {
   }, []);
 
   useEffect(() => {
+    if (previewSample()) {
+      setLoading(false);
+      return undefined;
+    }
     fetchQuotes();
 
     const channel = supabase

@@ -2,6 +2,8 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "../lib/supabaseClient";
 import { useOwnerSession } from "../hooks/useOwnerSession";
+import { earningsDateFor, useEarningsMap } from "../hooks/useEarningsMap";
+import { blocksNewBuy, isEarningsSoon, nyToday, tradingDaysUntil } from "../lib/sellSignals";
 
 function fundamentalRead(f) {
   if (!f) return { score: null, sig: null, reasons: [] };
@@ -79,15 +81,17 @@ function technicalRead(q) {
   }
   return { sig, rr, reasons };
 }
-function earningsReason(dateStr) {
-  if (!dateStr) return null;
-  const days = Math.round((new Date(dateStr) - new Date()) / (1000 * 60 * 60 * 24));
-  if (days < 0 || days > 14) return null;
-  return `Earnings in ${days}d — event risk`;
+function earningsReason(dateStr, today) {
+  if (!isEarningsSoon(dateStr, today)) return null;
+  const days = tradingDaysUntil(today, dateStr);
+  if (days === 0) return "Earnings today — skip new buys";
+  return `Earnings in ${days} trading day${days === 1 ? "" : "s"} — skip new buys`;
 }
 
 export default function Opportunities() {
   const { ready, session } = useOwnerSession();
+  const { bySymbol } = useEarningsMap();
+  const today = nyToday();
   const [fundamental, setFundamental] = useState([]);
   const [quotes, setQuotes] = useState([]);
   const [portfolio, setPortfolio] = useState([]);
@@ -127,10 +131,15 @@ export default function Opportunities() {
     const { sig: tSig, rr, reasons: tReasons } = technicalRead(q);
     const held = !!p;
 
-    const earnReason = earningsReason(f?.next_earnings_date);
+    const earnDate = earningsDateFor(bySymbol, ticker, f?.next_earnings_date);
+    const soon = isEarningsSoon(earnDate, today);
+    const earnReason = earningsReason(earnDate, today);
 
     let category, priority, headline;
-    if (!held && fSig === "Buy" && tSig === "Buy") {
+    if (blocksNewBuy({ held, fundamentalSignal: fSig, technicalSignal: tSig, earningsSoon: soon })) {
+      category = "Earnings soon — skip new buy"; priority = 0;
+      headline = "Reporting within 5 trading days, so it stays off the new-buy list until after the report.";
+    } else if (!held && fSig === "Buy" && tSig === "Buy") {
       category = "New Buy Candidate"; priority = 0;
       headline = "Fundamentals and technicals both bullish, not currently held";
     } else if (held && fSig === "Buy" && tSig === "Buy") {
@@ -151,7 +160,7 @@ export default function Opportunities() {
     }
 
     return {
-      ticker, fScore, fSig, tSig, rr, held,
+      ticker, fScore, fSig, tSig, rr, held, soon,
       price: q?.price, category, priority, headline,
       allReasons: [...fReasons, ...tReasons, rr != null ? `R:R ${rr.toFixed(2)}` : null, earnReason].filter(Boolean),
     };
@@ -159,8 +168,9 @@ export default function Opportunities() {
 
   rows.sort((a, b) => a.priority - b.priority || (b.fScore || 0) - (a.fScore || 0));
 
-  const categories = ["New Buy Candidate", "Add to Existing Position", "Review Position", "Conflicting — Watch", "Neutral / Mixed", "Insufficient Data"];
+  const categories = ["Earnings soon — skip new buy", "New Buy Candidate", "Add to Existing Position", "Review Position", "Conflicting — Watch", "Neutral / Mixed", "Insufficient Data"];
   const categoryColor = {
+    "Earnings soon — skip new buy": "#f0b955",
     "New Buy Candidate": "#3ecf8e",
     "Add to Existing Position": "#4f8dfd",
     "Review Position": "#f0555a",
@@ -173,8 +183,9 @@ export default function Opportunities() {
     <div className="panel">
       <h2>Opportunities</h2>
       <p className="disclaimer" style={{ marginTop: 0, marginBottom: 12, borderTop: "none", paddingTop: 0 }}>
-        Ranks every ticker into an actionable bucket rather than just showing raw numbers. "New Buy Candidate" and
-        "Add to Existing" surface where fundamentals and technicals agree bullish. "Review Position" flags names you
+        Ranks every ticker into an actionable bucket rather than just showing raw numbers.         "New Buy Candidate" and
+        "Add to Existing" surface where fundamentals and technicals agree bullish. Names reporting within 5 trading
+        days are pulled out of the new-buy list. "Review Position" flags names you
         hold that are now showing a bearish signal. This is a triage tool, not a trade instruction — check the reasoning
         column before acting on anything.
         {ready && !session ? " Sign in so positions you already hold are marked as held." : ""}
@@ -194,7 +205,7 @@ export default function Opportunities() {
                 <tbody>
                   {catRows.map((r) => (
                     <tr key={r.ticker}>
-                      <td><strong>{r.ticker}</strong></td>
+                      <td><strong className={r.soon ? "earn-soon" : undefined}>{r.ticker}</strong></td>
                       <td>{r.price != null ? Number(r.price).toFixed(2) : "—"}</td>
                       <td>{r.fSig ? `${r.fSig} (${r.fScore})` : "—"}</td>
                       <td>{r.tSig || "—"}</td>

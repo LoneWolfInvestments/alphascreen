@@ -1,6 +1,11 @@
 // src/components/TechnicalAnalysis.jsx
 import React from "react";
 import { useWatchlistQuotes } from "../hooks/useWatchlistQuotes";
+import { earningsDateFor, useEarningsMap } from "../hooks/useEarningsMap";
+import { previewSample } from "../lib/previewSample";
+import { isEarningsSoon, nyToday } from "../lib/sellSignals";
+import { sampleWatchlistQuotes } from "../lib/sellSignalsSample";
+import EarningsDate from "./EarningsDate";
 
 function computeDerived(q) {
   // Donchian Channels (actual price extremes over 20 days) are a more honest
@@ -33,7 +38,15 @@ function computeDerived(q) {
 }
 
 export default function TechnicalAnalysis() {
-  const { quotes, loading, error, lastUpdated, refetch } = useWatchlistQuotes();
+  const sample = previewSample();
+  const live = useWatchlistQuotes();
+  const { bySymbol } = useEarningsMap();
+  const quotes = sample ? sampleWatchlistQuotes() : live.quotes;
+  const loading = sample ? false : live.loading;
+  const error = sample ? null : live.error;
+  const lastUpdated = sample ? "2026-10-29T21:00:00.000Z" : live.lastUpdated;
+  const refetch = live.refetch;
+  const today = nyToday();
   const fmt = (n) => (n == null || isNaN(n)) ? "—" : Number(n).toFixed(2);
   const fmtVol = (n) => (n == null ? "—" : Number(n).toLocaleString());
 
@@ -54,7 +67,7 @@ export default function TechnicalAnalysis() {
           <table>
             <thead>
               <tr>
-                <th>Ticker</th><th>Price</th><th>Volume</th><th>50 SMA</th><th>200 SMA</th><th>200 WMA</th><th>vs WMA</th>
+                <th>Ticker</th><th>Next earnings</th><th>Price</th><th>Volume</th><th>50 SMA</th><th>200 SMA</th><th>200 WMA</th><th>vs WMA</th>
                 <th>Trend</th><th>RSI</th><th>ADX</th><th>MACD</th><th>ATR</th>
                 <th>Donchian Up</th><th>Donchian Low</th>
                 <th>Fib 0.618</th><th>Entry</th><th>Stop</th><th>Target</th><th>R:R</th>
@@ -63,9 +76,12 @@ export default function TechnicalAnalysis() {
             <tbody>
               {quotes.map((q) => {
                 const c = computeDerived(q);
+                const earningsDate = earningsDateFor(bySymbol, q.symbol, null);
+                const soon = isEarningsSoon(earningsDate, today);
                 return (
-                  <tr key={q.symbol}>
-                    <td><strong>{q.symbol}</strong></td>
+                  <tr key={q.symbol} className={soon ? "earn-soon-row" : undefined}>
+                    <td><strong className={soon ? "earn-soon" : undefined}>{q.symbol}</strong></td>
+                    <td><EarningsDate date={earningsDate} today={today} /></td>
                     <td>{fmt(q.price)}</td>
                     <td>{fmtVol(q.volume)}</td>
                     <td>{fmt(q.sma_50)}</td>
@@ -98,7 +114,8 @@ export default function TechnicalAnalysis() {
       )}
       <p className="disclaimer">
         Trend reads 50 SMA vs 200 SMA (falls back to MACD sign if SMAs aren't available yet, e.g. right after adding
-        a new symbol before 200 days of history accumulate). Stop/Target use the 20-day Donchian Channel — actual
+        a new symbol before 200 days of history accumulate). Next earnings is flagged in amber when the report is
+        within 5 trading days — leave those off a new-buy list until after the report. Stop/Target use the 20-day Donchian Channel — actual
         recent price extremes, not a statistical band. ADX above ~25 generally signals a genuinely trending market;
         below that, MACD/RSI signals are less reliable since there's no strong trend to confirm them. ATR is in the
         same units as price — a useful reference for how far a stop should realistically sit given normal volatility.

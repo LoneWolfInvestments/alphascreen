@@ -2,6 +2,11 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "../lib/supabaseClient";
 import { ownerMutationFailed } from "../lib/ownerMutation";
+import { earningsDateFor, useEarningsMap } from "../hooks/useEarningsMap";
+import { previewSample } from "../lib/previewSample";
+import { isEarningsSoon, nyToday } from "../lib/sellSignals";
+import { sampleScreenerRows } from "../lib/sellSignalsSample";
+import EarningsDate from "./EarningsDate";
 
 function signalFromBreadth(breadth) {
   if (breadth == null) return { label: "No data", color: "#8b93a7" };
@@ -19,6 +24,9 @@ const fmtCap = (n) => {
 };
 
 export default function FundamentalScreener() {
+  const sample = previewSample();
+  const { bySymbol } = useEarningsMap();
+  const today = nyToday();
   const [rows, setRows] = useState([]);
   const [ticker, setTicker] = useState("");
 
@@ -28,13 +36,17 @@ export default function FundamentalScreener() {
   }, []);
 
   useEffect(() => {
+    if (sample) {
+      setRows(sampleScreenerRows());
+      return undefined;
+    }
     load();
     const channel = supabase
       .channel("fundamental-changes")
       .on("postgres_changes", { event: "*", schema: "public", table: "fundamental_scores" }, load)
       .subscribe();
     return () => supabase.removeChannel(channel);
-  }, [load]);
+  }, [load, sample]);
 
   const addTicker = async () => {
     if (!ticker.trim()) return;
@@ -60,7 +72,7 @@ export default function FundamentalScreener() {
           <label>Add Ticker</label>
           <input value={ticker} onChange={(e) => setTicker(e.target.value)} placeholder="AAPL" />
         </div>
-        <button className="action" onClick={addTicker}>Add</button>
+        <button className="action" onClick={addTicker} disabled={sample}>Add</button>
       </div>
       <p className="disclaimer" style={{ marginTop: 0, marginBottom: 12, borderTop: "none", paddingTop: 0 }}>
         Adding a ticker here just registers it so the automations have something to update — everything below fills
@@ -79,9 +91,11 @@ export default function FundamentalScreener() {
           <tbody>
             {sorted.map((r) => {
               const sig = signalFromBreadth(r.inst_net_breadth);
+              const earningsDate = earningsDateFor(bySymbol, r.ticker, r.next_earnings_date);
+              const soon = isEarningsSoon(earningsDate, today);
               return (
-                <tr key={r.ticker}>
-                  <td><strong>{r.ticker}</strong></td>
+                <tr key={r.ticker} className={soon ? "earn-soon-row" : undefined}>
+                  <td><strong className={soon ? "earn-soon" : undefined}>{r.ticker}</strong></td>
                   <td>{r.inst_buyers ?? "—"}</td>
                   <td>{r.inst_sellers ?? "—"}</td>
                   <td>{r.inst_net_breadth != null ? `${r.inst_net_breadth > 0 ? "+" : ""}${r.inst_net_breadth.toFixed(1)}%` : "—"}</td>
@@ -90,7 +104,7 @@ export default function FundamentalScreener() {
                   <td>{fmtCap(r.market_cap)}</td>
                   <td>{fmtNum(r.eps)}</td>
                   <td>{r.profit_margin != null ? `${(r.profit_margin * 100).toFixed(1)}%` : "—"}</td>
-                  <td>{r.next_earnings_date || "—"}</td>
+                  <td><EarningsDate date={earningsDate} today={today} /></td>
                   <td>{r.analyst_rating || "—"}</td>
                   <td><button className="action danger" onClick={() => removeRow(r.ticker)}>x</button></td>
                 </tr>
