@@ -6,6 +6,7 @@ import { earningsDateFor, useEarningsMap } from "../hooks/useEarningsMap";
 import { formatDay, isEarningsSoon, nyToday, tradingDaysUntil } from "../lib/sellSignals";
 import { technicalReadFromQuote } from "../lib/swingSetups";
 import EarningsDate from "./EarningsDate";
+import { MarketStressBanner } from "./MarketStress";
 
 // ---- Fundamental side: institutional breadth + analyst rating combined ----
 function fundamentalRead(f) {
@@ -105,6 +106,8 @@ export default function Overview() {
   rows.sort((a, b) => priority[a.confluence.label] - priority[b.confluence.label]);
 
   return (
+    <>
+    <MarketStressBanner />
     <div className="panel">
       <h2>Overview — Signal Confluence</h2>
       <p className="disclaimer" style={{ marginTop: 0, marginBottom: 12, borderTop: "none", paddingTop: 0 }}>
@@ -150,5 +153,6 @@ export default function Overview() {
         )}
       </div>
     </div>
+    </>
   );
 }
