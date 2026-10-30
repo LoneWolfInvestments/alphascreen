@@ -1,15 +1,34 @@
 // api/ask-analyst.js
 // Calls the Anthropic API server-side, keeping your API key off the client.
-// Requires an ANTHROPIC_API_KEY environment variable (get one at console.anthropic.com).
+// Only a signed-in owner (an email listed in allowed_owners) can call it.
+// Set a monthly spend limit in the Anthropic console as a second safety net.
+
+import { readAnalystBody } from "../server/analystBody.js";
+import { requireOwner } from "../server/requireOwner.js";
+
+const HOUR_MS = 60 * 60 * 1000;
+const MAX_BODY_BYTES = 20_000;
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { question, context } = req.body || {};
-  if (!question) {
-    return res.status(400).json({ error: "Missing question" });
+  const contentLength = Number(req.headers["content-length"] || 0);
+  if (Number.isFinite(contentLength) && contentLength > MAX_BODY_BYTES) {
+    return res.status(413).json({ error: "Request is too large." });
+  }
+
+  const owner = await requireOwner(req, res, {
+    bucket: "ask-analyst",
+    limit: 15,
+    windowMs: HOUR_MS,
+  });
+  if (!owner) return;
+
+  const parsed = readAnalystBody(req.body);
+  if (parsed.error) {
+    return res.status(parsed.status).json({ error: parsed.error });
   }
 
   if (!process.env.ANTHROPIC_API_KEY) {
@@ -30,7 +49,7 @@ export default async function handler(req, res) {
         messages: [
           {
             role: "user",
-            content: `You are an equity research analyst assistant embedded in a screening tool called AlphaScreen. Answer with institutional-grade analytical depth: be specific, quantify bear/bull cases where possible, and give a clear verdict. Keep it under 200 words. ${context || ""}\n\nQuestion: ${question}`,
+            content: `You are an equity research analyst assistant embedded in a screening tool called AlphaScreen. Answer with institutional-grade analytical depth: be specific, quantify bear/bull cases where possible, and give a clear verdict. Keep it under 200 words. ${parsed.context}\n\nQuestion: ${parsed.question}`,
           },
         ],
       }),

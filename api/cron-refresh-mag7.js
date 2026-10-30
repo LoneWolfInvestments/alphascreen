@@ -5,6 +5,7 @@
 // 10-second function timeout.
 
 import { createClient } from "@supabase/supabase-js";
+import { rejectIfCronUnauthorized } from "../server/cronAuth.js";
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 const TWELVE_DATA_BASE = "https://api.twelvedata.com";
@@ -43,10 +44,7 @@ function pctChange(closes, daysAgo) {
 }
 
 export default async function handler(req, res) {
-  const authHeader = req.headers["authorization"];
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
+  if (rejectIfCronUnauthorized(req, res)) return;
 
   const results = [];
   const failed = [];

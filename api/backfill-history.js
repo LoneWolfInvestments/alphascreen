@@ -7,6 +7,7 @@
 // Usage: /api/backfill-history?symbol=TICKER
 
 import { createClient } from "@supabase/supabase-js";
+import { rejectIfCronUnauthorized } from "../server/cronAuth.js";
 import { RSI, MACD, SMA } from "technicalindicators";
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
@@ -19,10 +20,7 @@ const MACD_SLOW = 26;
 const MACD_SIGNAL = 9;
 
 export default async function handler(req, res) {
-  const authHeader = req.headers["authorization"];
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
+  if (rejectIfCronUnauthorized(req, res)) return;
 
   const symbol = req.query.symbol;
   if (!symbol) {

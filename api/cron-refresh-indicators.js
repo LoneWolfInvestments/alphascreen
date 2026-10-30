@@ -8,6 +8,7 @@
 // npm install technicalindicators @supabase/supabase-js
 
 import { createClient } from "@supabase/supabase-js";
+import { rejectIfCronUnauthorized } from "../server/cronAuth.js";
 import { RSI, MACD, BollingerBands, ATR, ADX, SMA, WMA } from "technicalindicators";
 
 const supabase = createClient(
@@ -118,10 +119,7 @@ function computeIndicators({ closes, highs, lows }) {
 }
 
 export default async function handler(req, res) {
-  const authHeader = req.headers["authorization"];
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
+  if (rejectIfCronUnauthorized(req, res)) return;
 
   // This job is split into shards to respect Twelve Data's free-tier rate limit
   // (8 API credits/minute) AND Vercel's 10-second function timeout on the Hobby plan —

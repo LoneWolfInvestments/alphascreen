@@ -44,22 +44,13 @@ create table if not exists vix_snapshot (
   updated_at timestamptz default now()
 );
 
--- Row-level security. This is a single-user personal tool, so we allow the public
--- anon key (already exposed in your browser bundle) to read AND write these tables —
--- there's no login system here. Anyone with your site's URL could technically write
--- to these tables. That's an acceptable trade-off for a personal research tool, but
--- worth knowing: don't put anything sensitive in ticker/notes/rationale fields, and
--- if you ever want this properly locked down, that requires adding Supabase Auth
--- (a login step) — a separate, bigger project.
+-- Turn on row-level security with no policies yet. Until schema-rls-lockdown.sql
+-- is applied, the anon key cannot read or write these tables (the service-role
+-- key used by cron still can). Do not add policies with "using (true)" for writes.
+-- That would let anyone holding the public anon key edit the portfolio.
 
 alter table fundamental_scores enable row level security;
 alter table portfolio enable row level security;
 alter table positioning enable row level security;
 alter table reallocation_log enable row level security;
 alter table vix_snapshot enable row level security;
-
-create policy "public all fundamental_scores" on fundamental_scores for all using (true) with check (true);
-create policy "public all portfolio" on portfolio for all using (true) with check (true);
-create policy "public all positioning" on positioning for all using (true) with check (true);
-create policy "public all reallocation_log" on reallocation_log for all using (true) with check (true);
-create policy "public all vix_snapshot" on vix_snapshot for all using (true) with check (true);

@@ -1,13 +1,16 @@
 // Vercel serverless function: /api/quote.js
-// Deploy path: place this file at /api/quote.js in your project root (Vercel auto-detects it)
 // Env var needed: TWELVE_DATA_API_KEY (set in Vercel dashboard, never in client code)
+// Only a signed-in owner can call this, and only for VIX plus symbols already
+// on the watchlist. Results are cached for 60 seconds on this instance.
+
+import { requireOwner } from "../server/requireOwner.js";
+import { allowedInterval, clampOutputSize, normalizeSymbol } from "../server/quoteGuard.js";
 
 const BASE_URL = "https://api.twelvedata.com";
+const HOUR_MS = 60 * 60 * 1000;
 
-// Simple in-memory cache to avoid burning through rate limits on repeated requests.
-// Resets on cold start — fine for a free-tier screener; swap for Redis/Supabase if you scale up.
 const cache = new Map();
-const CACHE_TTL_MS = 60 * 1000; // 60s — adjust based on your rate limit budget
+const CACHE_TTL_MS = 60 * 1000;
 
 function getCached(key) {
   const entry = cache.get(key);
@@ -23,21 +26,52 @@ function setCache(key, data) {
   cache.set(key, { data, timestamp: Date.now() });
 }
 
-export default async function handler(req, res) {
-  const { symbol, endpoint = "quote" } = req.query;
+async function symbolAllowed(supabase, symbol) {
+  if (symbol === "VIX") return true;
+  const { data, error } = await supabase.from("watchlist").select("symbol").eq("active", true);
+  if (error) return false;
+  return (data || []).some((row) => String(row.symbol).toUpperCase() === symbol);
+}
 
-  if (!symbol) {
-    return res.status(400).json({ error: "Missing required query param: symbol" });
+export default async function handler(req, res) {
+  if (req.method !== "GET") {
+    return res.status(405).json({ error: "Method not allowed" });
   }
 
-  // Allowlist which Twelve Data endpoints this proxy will forward.
-  // Extend this as you wire in more AlphaScreen tabs.
+  const owner = await requireOwner(req, res, {
+    bucket: "quote",
+    limit: 60,
+    windowMs: HOUR_MS,
+  });
+  if (!owner) return;
+
+  const symbol = normalizeSymbol(req.query.symbol);
+  if (!symbol) {
+    return res.status(400).json({ error: "Missing or invalid symbol" });
+  }
+
+  const endpoint = req.query.endpoint || "quote";
   const allowedEndpoints = ["quote", "rsi", "macd", "bbands", "time_series"];
   if (!allowedEndpoints.includes(endpoint)) {
     return res.status(400).json({ error: `Unsupported endpoint: ${endpoint}` });
   }
 
-  const cacheKey = `${endpoint}:${symbol}`;
+  const interval = allowedInterval(req.query.interval);
+  if (!interval) {
+    return res.status(400).json({ error: "Only the 1day interval is allowed" });
+  }
+
+  const allowed = await symbolAllowed(owner.supabase, symbol);
+  if (!allowed) {
+    return res.status(400).json({ error: "Symbol is not on the watchlist" });
+  }
+
+  if (!process.env.TWELVE_DATA_API_KEY) {
+    return res.status(500).json({ error: "TWELVE_DATA_API_KEY is not configured" });
+  }
+
+  const outputSize = clampOutputSize(req.query.outputsize);
+  const cacheKey = `${endpoint}:${symbol}:${interval}:${outputSize}`;
   const cached = getCached(cacheKey);
   if (cached) {
     return res.status(200).json({ ...cached, _cached: true });
@@ -48,13 +82,11 @@ export default async function handler(req, res) {
     url.searchParams.set("symbol", symbol);
     url.searchParams.set("apikey", process.env.TWELVE_DATA_API_KEY);
 
-    // Reasonable defaults for indicator endpoints — override via extra query params if needed
-    if (endpoint === "rsi" || endpoint === "macd" || endpoint === "bbands") {
-      url.searchParams.set("interval", req.query.interval || "1day");
+    if (endpoint === "rsi" || endpoint === "macd" || endpoint === "bbands" || endpoint === "time_series") {
+      url.searchParams.set("interval", interval);
     }
     if (endpoint === "time_series") {
-      url.searchParams.set("interval", req.query.interval || "1day");
-      url.searchParams.set("outputsize", req.query.outputsize || "30");
+      url.searchParams.set("outputsize", String(outputSize));
     }
 
     const response = await fetch(url.toString());

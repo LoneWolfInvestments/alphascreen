@@ -1,8 +1,11 @@
 // src/components/Positioning.jsx
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "../lib/supabaseClient";
+import { ownerMutationFailed } from "../lib/ownerMutation";
+import { useOwnerSession } from "../hooks/useOwnerSession";
 
 export default function Positioning() {
+  const { ready, session } = useOwnerSession();
   const [rows, setRows] = useState([]);
   const [log, setLog] = useState([]);
   const [form, setForm] = useState({ asset: "", cot_net: "", cta: "Long", gex: "" });
@@ -18,31 +21,40 @@ export default function Positioning() {
   }, []);
 
   useEffect(() => {
+    if (!ready) return undefined;
     loadPositioning();
     loadLog();
     const c1 = supabase.channel("positioning-changes").on("postgres_changes", { event: "*", schema: "public", table: "positioning" }, loadPositioning).subscribe();
     const c2 = supabase.channel("reallocation-changes").on("postgres_changes", { event: "*", schema: "public", table: "reallocation_log" }, loadLog).subscribe();
     return () => { supabase.removeChannel(c1); supabase.removeChannel(c2); };
-  }, [loadPositioning, loadLog]);
+  }, [loadPositioning, loadLog, ready, session?.user?.id]);
 
   const addPositioning = async () => {
     if (!form.asset.trim()) return;
-    await supabase.from("positioning").insert({
+    const failed = await ownerMutationFailed(supabase.from("positioning").insert({
       asset: form.asset.trim(),
       cot_net: Number(form.cot_net) || 0,
       cta: form.cta,
       gex: Number(form.gex) || 0,
-    });
+    }));
+    if (failed) return;
     setForm({ asset: "", cot_net: "", cta: "Long", gex: "" });
   };
-  const removePositioning = async (id) => { await supabase.from("positioning").delete().eq("id", id); };
+  const removePositioning = async (id) => {
+    await ownerMutationFailed(supabase.from("positioning").delete().eq("id", id));
+  };
 
   const addLog = async () => {
     if (!logForm.action.trim()) return;
-    await supabase.from("reallocation_log").insert({ action: logForm.action.trim(), rationale: logForm.rationale.trim() });
+    const failed = await ownerMutationFailed(
+      supabase.from("reallocation_log").insert({ action: logForm.action.trim(), rationale: logForm.rationale.trim() })
+    );
+    if (failed) return;
     setLogForm({ action: "", rationale: "" });
   };
-  const removeLog = async (id) => { await supabase.from("reallocation_log").delete().eq("id", id); };
+  const removeLog = async (id) => {
+    await ownerMutationFailed(supabase.from("reallocation_log").delete().eq("id", id));
+  };
 
   const readFor = (r) => {
     let read = "Balanced";
@@ -109,7 +121,15 @@ export default function Positioning() {
               ))}
             </tbody>
           </table>
-          {log.length === 0 && <div className="empty">No reallocation entries yet.</div>}
+          {log.length === 0 && (
+            <div className="empty">
+              {!ready
+                ? "Loading..."
+                : session
+                  ? "No reallocation entries yet."
+                  : "Sign in (top of the page) to see your reallocation log."}
+            </div>
+          )}
         </div>
       </div>
     </>

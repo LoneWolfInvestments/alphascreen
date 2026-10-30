@@ -1,6 +1,7 @@
 // src/components/Overview.jsx
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "../lib/supabaseClient";
+import { useOwnerSession } from "../hooks/useOwnerSession";
 
 // ---- Fundamental side: institutional breadth + analyst rating combined ----
 function fundamentalRead(f) {
@@ -82,6 +83,7 @@ function confluenceRead(fSig, tSig) {
 }
 
 export default function Overview() {
+  const { ready, session } = useOwnerSession();
   const [fundamental, setFundamental] = useState([]);
   const [quotes, setQuotes] = useState([]);
   const [portfolio, setPortfolio] = useState([]);
@@ -98,12 +100,13 @@ export default function Overview() {
   }, []);
 
   useEffect(() => {
+    if (!ready) return undefined;
     loadAll();
     const c1 = supabase.channel("overview-fundamental").on("postgres_changes", { event: "*", schema: "public", table: "fundamental_scores" }, loadAll).subscribe();
     const c2 = supabase.channel("overview-quotes").on("postgres_changes", { event: "*", schema: "public", table: "quotes" }, loadAll).subscribe();
     const c3 = supabase.channel("overview-portfolio").on("postgres_changes", { event: "*", schema: "public", table: "portfolio" }, loadAll).subscribe();
     return () => { supabase.removeChannel(c1); supabase.removeChannel(c2); supabase.removeChannel(c3); };
-  }, [loadAll]);
+  }, [loadAll, ready, session?.user?.id]);
 
   // Union of every ticker mentioned anywhere — portfolio just contributes tickers
   // to make sure held positions show up here, even though its weight/conviction
@@ -141,6 +144,7 @@ export default function Overview() {
         to trust a signal, not its direction. P/E, market cap, EPS, and margin are deliberately left out of the score
         since they need sector/historical context to interpret and would create false precision if forced into it —
         see the Fundamental Screener tab for those directly.
+        {ready && !session ? " Sign in to include tickers that are only in your portfolio." : ""}
       </p>
       <div className="table-wrap">
         <table>

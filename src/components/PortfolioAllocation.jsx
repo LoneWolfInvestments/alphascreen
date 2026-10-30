@@ -1,10 +1,13 @@
 // src/components/PortfolioAllocation.jsx
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "../lib/supabaseClient";
+import { ownerMutationFailed } from "../lib/ownerMutation";
+import { useOwnerSession } from "../hooks/useOwnerSession";
 
 const COLORS = ["#4f8dfd", "#3ecf8e", "#f0b955", "#f0555a", "#a06cf5", "#4fd1c5", "#f57ec1", "#9aa5b1"];
 
 export default function PortfolioAllocation() {
+  const { ready, session } = useOwnerSession();
   const [rows, setRows] = useState([]);
   const [quotes, setQuotes] = useState([]);
   const [form, setForm] = useState({ ticker: "", sector: "", shares: "", cost_basis: "", conviction: 3 });
@@ -19,27 +22,29 @@ export default function PortfolioAllocation() {
   }, []);
 
   useEffect(() => {
+    if (!ready) return undefined;
     load();
     const c1 = supabase.channel("portfolio-changes").on("postgres_changes", { event: "*", schema: "public", table: "portfolio" }, load).subscribe();
     const c2 = supabase.channel("portfolio-quotes").on("postgres_changes", { event: "*", schema: "public", table: "quotes" }, load).subscribe();
     return () => { supabase.removeChannel(c1); supabase.removeChannel(c2); };
-  }, [load]);
+  }, [load, ready, session?.user?.id]);
 
   const addRow = async () => {
     if (!form.ticker.trim()) return;
-    await supabase.from("portfolio").upsert({
+    const failed = await ownerMutationFailed(supabase.from("portfolio").upsert({
       ticker: form.ticker.trim().toUpperCase(),
       sector: form.sector.trim() || "Unclassified",
       shares: Number(form.shares) || 0,
       cost_basis: Number(form.cost_basis) || 0,
       conviction: Number(form.conviction) || 3,
       updated_at: new Date().toISOString(),
-    });
+    }));
+    if (failed) return;
     setForm({ ticker: "", sector: "", shares: "", cost_basis: "", conviction: 3 });
   };
 
   const removeRow = async (ticker) => {
-    await supabase.from("portfolio").delete().eq("ticker", ticker);
+    await ownerMutationFailed(supabase.from("portfolio").delete().eq("ticker", ticker));
   };
 
   // Join each position with its live price and derive everything else
@@ -135,7 +140,15 @@ export default function PortfolioAllocation() {
               ))}
             </tbody>
           </table>
-          {rows.length === 0 && <div className="empty">No positions logged yet.</div>}
+          {rows.length === 0 && (
+            <div className="empty">
+              {!ready
+                ? "Loading..."
+                : session
+                  ? "No positions logged yet."
+                  : "Sign in (top of the page) to see and edit your portfolio."}
+            </div>
+          )}
         </div>
         <div>
           {pieRows.length > 0 && (
