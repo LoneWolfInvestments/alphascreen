@@ -1,4 +1,8 @@
 {
+  "functions": {
+    "api/cron-refresh-indicators.js": { "maxDuration": 60 },
+    "api/backfill-history.js": { "maxDuration": 60 }
+  },
   "crons": [
     { "path": "/api/cron-refresh-indicators?shard=0&shards=7", "schedule": "0 22 * * 1-5" },
     { "path": "/api/cron-refresh-indicators?shard=1&shards=7", "schedule": "0 23 * * 1-5" },

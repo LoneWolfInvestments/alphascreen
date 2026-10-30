@@ -4,6 +4,7 @@ import { supabase } from "../lib/supabaseClient";
 import { useOwnerSession } from "../hooks/useOwnerSession";
 import { earningsDateFor, useEarningsMap } from "../hooks/useEarningsMap";
 import { blocksNewBuy, isEarningsSoon, nyToday, tradingDaysUntil } from "../lib/sellSignals";
+import { technicalReadFromQuote } from "../lib/swingSetups";
 
 function fundamentalRead(f) {
   if (!f) return { score: null, sig: null, reasons: [] };
@@ -27,59 +28,8 @@ function fundamentalRead(f) {
   return { score, sig, reasons };
 }
 function technicalRead(q) {
-  if (!q) return { sig: null, rr: null, reasons: [] };
-  const reasons = [];
-  let score = 0;
-  let hasData = false;
-
-  if (q.rsi != null) {
-    hasData = true;
-    if (q.rsi < 35) { score += 1; reasons.push(`RSI ${Number(q.rsi).toFixed(0)} (oversold)`); }
-    else if (q.rsi > 65) { score -= 1; reasons.push(`RSI ${Number(q.rsi).toFixed(0)} (overbought)`); }
-  }
-  if (q.macd != null) {
-    hasData = true;
-    score += q.macd > 0 ? 1 : -1;
-    reasons.push(q.macd > 0 ? "MACD positive (bullish momentum)" : "MACD negative (bearish momentum)");
-  }
-  if (q.sma_50 != null && q.sma_200 != null) {
-    hasData = true;
-    if (q.sma_50 > q.sma_200) { score += 1; reasons.push("50 SMA above 200 SMA (uptrend structure)"); }
-    else { score -= 1; reasons.push("50 SMA below 200 SMA (downtrend structure)"); }
-  }
-  if (q.price != null && q.wma_200 != null) {
-    hasData = true;
-    if (q.price >= q.wma_200) { score += 1; reasons.push("Price above 200 WMA"); }
-    else { score -= 1; reasons.push("Price below 200 WMA"); }
-  }
-  if (q.price != null && q.donchian_upper != null && q.donchian_lower != null && q.donchian_upper !== q.donchian_lower) {
-    hasData = true;
-    const pos = (q.price - q.donchian_lower) / (q.donchian_upper - q.donchian_lower);
-    if (pos > 0.9) { score += 1; reasons.push("Price near 20-day high (Donchian breakout)"); }
-    else if (pos < 0.1) { score -= 1; reasons.push("Price near 20-day low (Donchian breakdown)"); }
-  }
-
-  // ADX doesn't add to the directional score — it tells you whether the other
-  // signals are trustworthy in the first place. A weak ADX means "Buy"/"Sell"
-  // here is a low-conviction read regardless of what RSI/MACD/SMA/Donchian say.
-  if (q.adx != null && q.adx < 20) {
-    reasons.push(`ADX ${Number(q.adx).toFixed(0)} (weak/no trend — signal less reliable)`);
-  } else if (q.adx != null && q.adx >= 25) {
-    reasons.push(`ADX ${Number(q.adx).toFixed(0)} (confirmed trending market)`);
-  }
-
-  let sig = null;
-  if (score >= 3) sig = "Buy";
-  else if (score <= -3) sig = "Sell";
-  else if (hasData) sig = "Hold";
-
-  // Donchian Channel R:R (real price extremes) replaces the old Bollinger-based
-  // approximation, matching the same switch made in Technical Analysis.
-  let rr = null;
-  if (q.price != null && q.donchian_lower != null && q.donchian_upper != null && q.price !== q.donchian_lower) {
-    rr = Math.abs((q.donchian_upper - q.price) / (q.price - q.donchian_lower));
-  }
-  return { sig, rr, reasons };
+  const read = technicalReadFromQuote(q);
+  return { sig: read.sig, label: read.label, reasons: read.reasons };
 }
 function earningsReason(dateStr, today) {
   if (!isEarningsSoon(dateStr, today)) return null;
@@ -128,7 +78,7 @@ export default function Opportunities() {
     const p = portfolio.find((r) => r.ticker === ticker);
 
     const { score: fScore, sig: fSig, reasons: fReasons } = fundamentalRead(f);
-    const { sig: tSig, rr, reasons: tReasons } = technicalRead(q);
+    const { sig: tSig, label: tLabel, reasons: tReasons } = technicalRead(q);
     const held = !!p;
 
     const earnDate = earningsDateFor(bySymbol, ticker, f?.next_earnings_date);
@@ -160,9 +110,9 @@ export default function Opportunities() {
     }
 
     return {
-      ticker, fScore, fSig, tSig, rr, held, soon,
+      ticker, fScore, fSig, tSig, tLabel, held, soon,
       price: q?.price, category, priority, headline,
-      allReasons: [...fReasons, ...tReasons, rr != null ? `R:R ${rr.toFixed(2)}` : null, earnReason].filter(Boolean),
+      allReasons: [...fReasons, ...tReasons, earnReason].filter(Boolean),
     };
   });
 
@@ -183,11 +133,10 @@ export default function Opportunities() {
     <div className="panel">
       <h2>Opportunities</h2>
       <p className="disclaimer" style={{ marginTop: 0, marginBottom: 12, borderTop: "none", paddingTop: 0 }}>
-        Ranks every ticker into an actionable bucket rather than just showing raw numbers.         "New Buy Candidate" and
-        "Add to Existing" surface where fundamentals and technicals agree bullish. Names reporting within 5 trading
-        days are pulled out of the new-buy list. "Review Position" flags names you
-        hold that are now showing a bearish signal. This is a triage tool, not a trade instruction — check the reasoning
-        column before acting on anything.
+        Ranks every ticker into an actionable bucket. A technical Buy is a Breakout or a Pullback in an uptrend,
+        not a low RSI. Names reporting within 5 trading days are pulled out of the new-buy list. "Review Position"
+        flags names you hold that are now in a downtrend. This is a triage tool, not a trade instruction — read the
+        reason before acting.
         {ready && !session ? " Sign in so positions you already hold are marked as held." : ""}
       </p>
 
@@ -200,7 +149,7 @@ export default function Opportunities() {
             <div className="table-wrap">
               <table>
                 <thead>
-                  <tr><th>Ticker</th><th>Price</th><th>Fundamental</th><th>Technical</th><th>Why</th></tr>
+                  <tr><th>Ticker</th><th>Price</th><th>Fundamental</th><th>Setup</th><th>Why</th></tr>
                 </thead>
                 <tbody>
                   {catRows.map((r) => (
@@ -208,7 +157,7 @@ export default function Opportunities() {
                       <td><strong className={r.soon ? "earn-soon" : undefined}>{r.ticker}</strong></td>
                       <td>{r.price != null ? Number(r.price).toFixed(2) : "—"}</td>
                       <td>{r.fSig ? `${r.fSig} (${r.fScore})` : "—"}</td>
-                      <td>{r.tSig || "—"}</td>
+                      <td>{r.tLabel || "—"}</td>
                       <td style={{ whiteSpace: "normal", fontSize: 12 }}>
                         {r.headline}
                         {r.allReasons.length > 0 && (

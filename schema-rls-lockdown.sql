@@ -229,6 +229,28 @@ begin
   $policy$;
 end $$;
 
+-- Daily bars are public market data. Reads are open. There is no write policy,
+-- so only the service-role key used by the nightly job can insert them.
+-- If the table is not created yet, run schema-daily-bars.sql and run this file again.
+do $$
+begin
+  if to_regclass('public.daily_bars') is null then
+    raise notice 'daily_bars does not exist yet; run schema-daily-bars.sql';
+    return;
+  end if;
+
+  execute 'alter table public.daily_bars enable row level security';
+  execute 'alter table public.daily_bars force row level security';
+  perform public._alphascreen_drop_policies('daily_bars');
+  execute $policy$
+    create policy "public read daily_bars"
+      on public.daily_bars
+      for select
+      to anon, authenticated
+      using (true)
+  $policy$;
+end $$;
+
 drop function public._alphascreen_drop_policies(text);
 
 do $$
