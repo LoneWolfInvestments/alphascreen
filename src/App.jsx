@@ -5,29 +5,35 @@ import Opportunities from "./components/Opportunities";
 import Overview from "./components/Overview";
 import FundamentalScreener from "./components/FundamentalScreener";
 import TechnicalAnalysis from "./components/TechnicalAnalysis";
-import VixDashboard from "./components/VixDashboard";
 import PortfolioAllocation from "./components/PortfolioAllocation";
-import Positioning from "./components/Positioning";
+import MarketStress from "./components/MarketStress";
 import Mag7 from "./components/Mag7";
 import SellSignals from "./components/SellSignals";
+import ReallocationLog from "./components/ReallocationLog";
 import AuthBar from "./components/AuthBar";
 
 const TABS = [
   { key: "opportunities", label: "Opportunities", Component: Opportunities },
+  { key: "stress", label: "Market Stress", Component: MarketStress },
   { key: "overview", label: "Overview (raw)", Component: Overview },
   { key: "fundamental", label: "Fundamental Screener", Component: FundamentalScreener },
   { key: "technical", label: "Technical Analysis", Component: TechnicalAnalysis },
   { key: "mag7", label: "MAG7", Component: Mag7 },
-  { key: "vix", label: "VIX Dashboard", Component: VixDashboard },
   { key: "portfolio", label: "Portfolio Allocation", Component: PortfolioAllocation },
   { key: "sell", label: "Sell Signals", Component: SellSignals },
-  { key: "positioning", label: "Positioning / Bottleneck", Component: Positioning },
+  { key: "reallocation", label: "Reallocation Log", Component: ReallocationLog },
 ];
+
+const TAB_ALIASES = {
+  vix: "stress",
+  positioning: "reallocation",
+};
 
 function initialTab() {
   if (typeof window === "undefined") return "opportunities";
   const requested = new URLSearchParams(window.location.search).get("tab");
-  return TABS.some((tab) => tab.key === requested) ? requested : "opportunities";
+  const key = TAB_ALIASES[requested] || requested;
+  return TABS.some((tab) => tab.key === key) ? key : "opportunities";
 }
 
 export default function App() {
