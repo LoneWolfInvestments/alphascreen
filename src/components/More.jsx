@@ -5,7 +5,7 @@ import { useOwnerSession } from "../hooks/useOwnerSession";
 import FundamentalScreener from "./FundamentalScreener";
 import MarketStress from "./MarketStress";
 import SetupStudy from "./SetupStudy";
-import Mag7 from "./Mag7";
+import TechnicalAnalysis from "./TechnicalAnalysis";
 import ReallocationLog from "./ReallocationLog";
 import { HealthBanner } from "./HealthBanner";
 import { summarizeHealth } from "../lib/dataHealth";
@@ -15,8 +15,8 @@ const SECTIONS = [
   { key: "status", label: "Status" },
   { key: "fundamentals", label: "Fundamentals" },
   { key: "stress", label: "Market stress" },
+  { key: "setups", label: "Setups" },
   { key: "study", label: "Setup study" },
-  { key: "mag7", label: "MAG7" },
   { key: "log", label: "Notes" },
 ];
 
@@ -128,8 +128,8 @@ export default function More({ section, onSection }) {
       {active === "status" ? <StatusDetail /> : null}
       {active === "fundamentals" ? <FundamentalScreener /> : null}
       {active === "stress" ? <MarketStress /> : null}
+      {active === "setups" ? <TechnicalAnalysis /> : null}
       {active === "study" ? <SetupStudy /> : null}
-      {active === "mag7" ? <Mag7 /> : null}
       {active === "log" ? <ReallocationLog /> : null}
     </div>
   );

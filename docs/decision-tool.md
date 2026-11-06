@@ -2,12 +2,12 @@
 
 The top bar has four items.
 
-- Today lists names you do not hold. A fresh Breakout or Pullback is a research candidate, not a confirmed buy. If company figures are missing or stale, the name stays visible with that warning. Earnings inside five sessions are marked avoid-new-entry. The order is relative strength versus SPY.
-- My holdings is the book you already own: planned downside at the trailing exit stop, exit checks, the position-size calculator, the holdings editor, and the private journal.
-- Setups is the price evidence: trend gate, relative strength, the entry trigger, and the 2×ATR(14) entry stop.
-- More holds company fundamentals, the market-stress history, the setup study, MAG7, notes, and data status.
+- Signals is the first screen. Each name leads with an overall label: Buy candidate, Hold / Wait, Sell / Exit review, Avoid / Not ready, or Data check. Fundamentals, technicals, and supporting context are Positive, Negative, Mixed, or Unknown. They are not added into a score. A buy candidate needs positive company figures and a fresh breakout or pullback, and earnings must not be inside five sessions. Unknown company figures do not count as positive. Sell / Exit review is only for a holding whose trailing exit stop is through. An unheld weak trend is Avoid, not a short.
+- MAG7 is its own tab. It ranks AAPL, MSFT, GOOGL, AMZN, META, and NVDA. Tesla is not added.
+- My holdings is the book you already own: planned downside, exit checks, the position-size calculator, the holdings editor, and the private journal.
+- More holds company fundamentals (where you add or remove names), setups, the setup study, market-stress history, notes, and data status.
 
-Old links still open the same work. `?tab=sell` opens exits. `?tab=size` opens the calculator. `?tab=technical` opens Setups. `?tab=fundamental`, `?tab=study`, `?tab=stress`, and `?tab=mag7` open the matching section under More.
+Old links still open. `?tab=sell` opens exits. `?tab=size` opens the calculator. `?tab=technical` and `?tab=setups` open Setups under More. `?tab=mag7` opens the MAG7 tab.
 
 Prices are the daily close. A new download of the same session is not a new session. The market light stays blank until its nightly job has saved a row. This app does not place orders.
 

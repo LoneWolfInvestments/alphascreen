@@ -34,8 +34,8 @@ export default function Mag7() {
     <div className="panel">
       <h2>MAG7 Performance</h2>
       <p className="disclaimer" style={{ marginTop: 0, marginBottom: 12, borderTop: "none", paddingTop: 0 }}>
-        Ranks AAPL, MSFT, GOOGL, AMZN, META, and NVDA by price performance (TSLA excluded — not in your watchlist).
-        Click a column header to re-rank by that period.
+        Ranks the saved set: AAPL, MSFT, GOOGL, AMZN, META, and NVDA. Tesla is not in this set, and no price is invented for it.
+        Click a column header to re-rank by that period. This tab does not add a separate buy score.
       </p>
 
       <div className="add-form" style={{ marginBottom: 12 }}>

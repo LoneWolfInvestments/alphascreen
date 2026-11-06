@@ -20,6 +20,18 @@ nav button.active { color: var(--accent); border-bottom-color: var(--accent); }
 .subnav button.active { color: var(--text); border-color: var(--accent); }
 .plain-list { margin: 8px 0 12px; padding-left: 18px; color: var(--text-dim); }
 .plain-list li { margin: 4px 0; }
+.pill { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 12px; font-weight: 650; }
+.pill.positive { background: #3ecf8e26; color: var(--green); }
+.pill.negative { background: #f0555a26; color: var(--red); }
+.pill.mixed { background: #f0b95526; color: var(--amber); }
+.pill.unknown, .pill.data { background: #8b93a726; color: var(--text-dim); }
+tr.selected-row { background: #4f8dfd14; }
+.signal-cards { display: none; }
+.signal-card { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; width: 100%; text-align: left; background: var(--panel-alt); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-bottom: 8px; cursor: pointer; }
+@media (max-width: 700px) {
+  .signal-cards { display: block; }
+  .signal-table { display: none; }
+}
 main { padding: 20px; max-width: 1280px; margin: 0 auto; }
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
 .panel h2 { margin: 0 0 12px 0; font-size: 15px; }
