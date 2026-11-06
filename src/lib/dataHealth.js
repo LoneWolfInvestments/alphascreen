@@ -14,6 +14,7 @@ export function summarizeHealth({
   fundamentals = [],
   stress = null,
   jobRuns = null,
+  jobHistory = null,
   now = new Date(),
 } = {}) {
   const prices = { fresh: 0, delayed: 0, stale: 0, missing: 0, ahead: 0, total: 0 };
@@ -36,17 +37,15 @@ export function summarizeHealth({
   }
 
   const regime = presentRegime(stress, now);
-  const jobsKnown = Array.isArray(jobRuns);
-  const jobs = jobsKnown ? jobRuns : [];
-  const failedJobs = jobs.filter((row) => row?.status === "failed" || row?.status === "partial");
+  const jobs = describeJobHistory(jobHistory, jobRuns);
 
   const priceGaps = prices.total === 0 || prices.fresh < prices.total;
   const fundamentalGaps = (fundamentals || []).length === 0 || fundamentalsReady < (fundamentals || []).length;
   const stressGap = regime.state !== "fresh";
-  const jobGaps = !jobsKnown || failedJobs.length > 0;
+  const jobGaps = jobs.gaps;
 
   let tone = "gaps";
-  if (prices.total === 0 && (fundamentals || []).length === 0 && regime.state === "missing" && !jobsKnown) {
+  if (prices.total === 0 && (fundamentals || []).length === 0 && regime.state === "missing" && !jobs.known) {
     tone = "unknown";
   }
 
@@ -60,9 +59,7 @@ export function summarizeHealth({
   if (regime.state === "missing") lines.push("Market light: no saved reading. That is not a calm market and not a stressed market.");
   else if (regime.state === "fresh") lines.push(`Market light: ${regime.regime} for session ${regime.asOf}.`);
   else lines.push(`Market light: not current (${regime.asOf || "no date"}).`);
-  if (!jobsKnown) lines.push("Scheduled-job history is not available yet. Unknown is not the same as failed.");
-  else if (jobs.length === 0) lines.push("Job history table is installed and has no recorded runs yet.");
-  else lines.push(`Recorded jobs: ${jobs.length}. Problems in that list: ${failedJobs.length}.`);
+  lines.push(jobs.line);
 
   return {
     tone,
@@ -77,8 +74,87 @@ export function summarizeHealth({
     fundamentalsStale,
     fundamentalsOther,
     regime,
-    jobsKnown,
-    failedJobs: failedJobs.length,
+    jobsKnown: jobs.known,
+    jobHistoryState: jobs.state,
+    failedJobs: jobs.problemCount,
     lines,
   };
+}
+
+function statusCounts(rows) {
+  const counts = { ok: 0, partial: 0, failed: 0, other: 0 };
+  for (const row of rows || []) {
+    if (row?.status === "ok") counts.ok += 1;
+    else if (row?.status === "partial") counts.partial += 1;
+    else if (row?.status === "failed") counts.failed += 1;
+    else counts.other += 1;
+  }
+  return counts;
+}
+
+export function isMissingJobTableError(error) {
+  const message = `${error?.message || ""} ${error?.details || ""} ${error?.hint || ""} ${error?.code || ""}`;
+  return /job_runs/i.test(message)
+    && /schema cache|does not exist|relation|Could not find|PGRST205|42P01/i.test(message);
+}
+
+// One read drives the summary line and the table. Rows from another account
+// or an older sign-in are dropped as soon as the session is gone or the next
+// read has not finished.
+export function resolveJobHistory({ ready = false, signedIn = false, pending = false, error = null, rows = [] } = {}) {
+  if (!ready) return { state: "loading", rows: [], detail: null };
+  if (!signedIn) return { state: "signed-out", rows: [], detail: null };
+  if (pending) return { state: "loading", rows: [], detail: null };
+  if (error) {
+    if (isMissingJobTableError(error)) return { state: "missing-table", rows: [], detail: null };
+    const detail = String(error.message || "The request failed.").slice(0, 200);
+    return { state: "error", rows: [], detail };
+  }
+  const list = Array.isArray(rows) ? rows : [];
+  if (list.length === 0) return { state: "empty", rows: [], detail: null };
+  return { state: "ready", rows: list, detail: null };
+}
+
+function describeJobHistory(jobHistory, jobRuns) {
+  if (jobHistory && jobHistory.state) {
+    const rows = Array.isArray(jobHistory.rows) ? jobHistory.rows : [];
+    const counts = statusCounts(rows);
+    const problemCount = counts.partial + counts.failed;
+    const known = jobHistory.state === "empty" || jobHistory.state === "ready";
+    return {
+      state: jobHistory.state,
+      known,
+      gaps: !known || problemCount > 0,
+      problemCount,
+      line: jobHistoryLine(jobHistory.state, rows, counts, jobHistory.detail),
+    };
+  }
+
+  const known = Array.isArray(jobRuns);
+  const rows = known ? jobRuns : [];
+  const counts = statusCounts(rows);
+  const problemCount = counts.partial + counts.failed;
+  return {
+    state: known ? (rows.length === 0 ? "empty" : "ready") : "unknown",
+    known,
+    gaps: !known || problemCount > 0,
+    problemCount,
+    line: known
+      ? jobHistoryLine(rows.length === 0 ? "empty" : "ready", rows, counts, null)
+      : "Scheduled-job history is not available yet. Unknown is not the same as failed.",
+  };
+}
+
+function jobHistoryLine(state, rows, counts, detail) {
+  if (state === "loading") return "Recorded job history is loading.";
+  if (state === "signed-out") return "Sign in to read recorded job runs. They are not public.";
+  if (state === "missing-table") return "Job history is not installed yet. Unknown is not the same as a failed job.";
+  if (state === "error") {
+    return detail
+      ? `Recorded job history could not be read. ${detail}`
+      : "Recorded job history could not be read.";
+  }
+  if (state === "empty") return "The job table is installed and has no recorded runs yet. That is not a failed job and not a successful one.";
+  const other = counts.other ? `, ${counts.other} other` : "";
+  return `Recorded jobs in this list: ${rows.length} (${counts.ok} ok, ${counts.partial} partial, ${counts.failed} failed${other}). An ok row is one saved run. It does not make prices, company figures, or the market light current.`;
 }
