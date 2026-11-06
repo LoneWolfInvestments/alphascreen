@@ -85,7 +85,7 @@ export default function ModelSignalRecord({ sample = previewSample(), notes = nu
       <h2>Buy candidate record</h2>
       {sample ? <div className="sample-banner">Sample record for the layout. These are not saved signals and not your trades.</div> : null}
       <p className="disclaimer" style={{ marginTop: 0, marginBottom: 12, borderTop: "none", paddingTop: 0 }}>
-        This is the model’s own list of Buy candidates, including names you never trade. It is not your journal. A row is saved once, the night after the close, and it is not rewritten when today’s figures change. The first nights stay empty until that job has run. Nothing here is a promise about the next trade.
+        This list is the full Buy candidate record. It is not the historical setup table, and it does not use that table as proof. A row is written once, the night after the close, from the figures known then. It does not invent earlier signals. An empty list means nothing has been captured yet. That is not a successful strategy and not a failed one.
       </p>
       {notice ? <p>{notice}</p> : null}
       {rows ? (
@@ -102,7 +102,11 @@ export default function ModelSignalRecord({ sample = previewSample(), notes = nu
           {overlaps.length ? (
             <p>Your journal has a note on {overlaps.map((item) => `${item.symbol} opened ${item.opened}`).join(", ")}. That note is not this result, and this result was not copied from the note.</p>
           ) : null}
-          {rows.length === 0 ? <div className="empty">No Buy candidate has been recorded yet.</div> : (
+          {rows.length === 0 ? (
+            <div className="empty">
+              No Buy candidate has been recorded yet. Capture starts the night the record job runs after the table was installed. Past Breakout and Pullback days in the historical study are not copied here.
+            </div>
+          ) : (
             <div className="table-wrap">
               <table>
                 <thead>
@@ -132,9 +136,12 @@ export default function ModelSignalRecord({ sample = previewSample(), notes = nu
           )}
         </>
       ) : <p>Reading the Buy candidate record…</p>}
-      <ul className="why">
-        {POLICY_RULES.map((rule) => <li key={rule}>{rule}</li>)}
-      </ul>
+      <details>
+        <summary>How a Buy candidate row is scored</summary>
+        <ul className="why">
+          {POLICY_RULES.map((rule) => <li key={rule}>{rule}</li>)}
+        </ul>
+      </details>
     </section>
   );
 }

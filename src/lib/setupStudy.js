@@ -273,6 +273,105 @@ export function studySetups(seriesBySymbol) {
   };
 }
 
+export const DETAIL_PAGE_SIZE = 8;
+
+export function historyWindow(study) {
+  const ready = (study?.coverage || []).filter((row) => row.status === "ready" && row.first && row.last);
+  let first = null;
+  let last = null;
+  for (const row of ready) {
+    if (!first || row.first < first) first = row.first;
+    if (!last || row.last > last) last = row.last;
+  }
+  return {
+    first,
+    last,
+    names: (study?.coverage || []).length,
+    ready: ready.length,
+    spyFirst: study?.spy?.first || null,
+    spyLast: study?.spy?.last || null,
+    spyBars: study?.spy?.bars || 0,
+  };
+}
+
+function signedPercent(value) {
+  if (!Number.isFinite(value)) return null;
+  const points = value * 100;
+  return `${points > 0 ? "+" : ""}${points.toFixed(1)}%`;
+}
+
+export function forwardReturnSentences(study) {
+  const window = historyWindow(study);
+  const lines = [];
+  if (window.first && window.last) {
+    lines.push(`The saved bars in this table run from ${window.first} through ${window.last}, across ${window.ready} names with enough history. SPY has ${window.spyBars} saved sessions${window.spyFirst ? `, from ${window.spyFirst} to ${window.spyLast}` : ""}.`);
+  } else {
+    lines.push("There is not enough saved history yet to name a start and end date.");
+  }
+  lines.push("These are averages across those names, not a result for one stock. Average is the mean of the finished results. Median is the middle result. Versus SPY subtracts SPY’s percent return from the stock’s percent return on the same two dates, so +2.0% means two percentage points of difference. Company figures and earnings dates are not used.");
+  for (const setup of STUDY_SETUPS) {
+    const summary = study?.summaries?.[setup];
+    if (!summary) continue;
+    const overlap = Math.max(0, summary.raw - summary.independent);
+    const signalWord = summary.raw === 1 ? "signal" : "signals";
+    const overlapWord = overlap === 1 ? "overlaps another signal within 20 sessions and stays out of the averages" : "overlap another signal within 20 sessions and stay out of the averages";
+    const parts = HORIZONS.map((horizon) => {
+      const bucket = summary.horizons[horizon];
+      const versus = bucket.excessCount ? signedPercent(bucket.avgExcess) : "no SPY comparison";
+      const waiting = bucket.pending ? `, ${bucket.pending} not finished` : "";
+      const dropped = bucket.ineligible ? `, ${bucket.ineligible} dropped for a gap or a missing price` : "";
+      return `${horizon} sessions: ${bucket.completed} finished, average ${signedPercent(bucket.avgReturn) || "—"}, median ${signedPercent(bucket.medianReturn) || "—"}, versus SPY ${versus} (${bucket.excessCount} with both SPY dates)${waiting}${dropped}`;
+    });
+    const outside = summary.independent === 1 ? "1 is outside that overlap" : `${summary.independent} are outside that overlap`;
+    lines.push(`${setup}: ${summary.raw} ${signalWord}. ${overlap} ${overlapWord}. ${outside}. ${parts.join(". ")}.`);
+  }
+  const finished = (study?.events || []).filter((event) => event.status === "completed" && event.independent).length;
+  const floor = study?.smallSample || SMALL_SAMPLE;
+  if (finished < floor) {
+    lines.push(`${finished} finished horizon rows are in the averages. Fewer than ${floor} describes this saved history. It is not evidence the setup works, and a weak number is still part of the result.`);
+  } else {
+    lines.push(`${finished} finished horizon rows are in the averages. That is still not the full Buy rule, and it is not a promise about the next trade.`);
+  }
+  return lines;
+}
+
+export function outcomeWords(status) {
+  if (status === "completed") return "Finished";
+  if (status === "pending") return "Not finished yet";
+  if (status === "ineligible_gap") return "Dropped — gap in the dates";
+  if (status === "ineligible_open") return "Dropped — no usable open";
+  if (status === "ineligible_exit") return "Dropped — no usable exit";
+  return "Not counted";
+}
+
+export function tickerChoices(study) {
+  const counts = new Map();
+  for (const signal of study?.signals || []) {
+    const current = counts.get(signal.symbol) || { symbol: signal.symbol, signals: 0, inAverages: 0 };
+    current.signals += 1;
+    if (signal.independent) current.inAverages += 1;
+    counts.set(signal.symbol, current);
+  }
+  return [...counts.values()].sort((a, b) => a.symbol.localeCompare(b.symbol));
+}
+
+export function filterSignals(study, { symbol = "", setup = "all" } = {}) {
+  const wanted = String(symbol || "").trim().toUpperCase();
+  return (study?.signals || []).filter((signal) => {
+    if (wanted && signal.symbol !== wanted) return false;
+    if (setup && setup !== "all" && signal.setup !== setup) return false;
+    return true;
+  });
+}
+
+export function pageSignals(signals, page = 1, size = DETAIL_PAGE_SIZE) {
+  const list = signals || [];
+  const pages = Math.max(1, Math.ceil(list.length / size) || 1);
+  const current = Math.min(Math.max(Number(page) || 1, 1), pages);
+  const start = (current - 1) * size;
+  return { page: current, pages, total: list.length, start, rows: list.slice(start, start + size) };
+}
+
 export function eventsToCsv(events) {
   const header = [
     "symbol", "setup", "signal_date", "independent", "horizon_sessions", "status",
