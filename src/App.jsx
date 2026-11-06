@@ -1,48 +1,60 @@
-// src/App.jsx
 import React, { useState } from "react";
 import "./styles.css";
-import Opportunities from "./components/Opportunities";
-import Overview from "./components/Overview";
-import FundamentalScreener from "./components/FundamentalScreener";
+import Today from "./components/Today";
+import MyBook from "./components/MyBook";
 import TechnicalAnalysis from "./components/TechnicalAnalysis";
-import SetupStudy from "./components/SetupStudy";
-import PortfolioAllocation from "./components/PortfolioAllocation";
-import PositionSize from "./components/PositionSize";
-import MarketStress from "./components/MarketStress";
-import Mag7 from "./components/Mag7";
-import SellSignals from "./components/SellSignals";
-import ReallocationLog from "./components/ReallocationLog";
+import More from "./components/More";
 import AuthBar from "./components/AuthBar";
 
-const TABS = [
-  { key: "opportunities", label: "Opportunities", Component: Opportunities },
-  { key: "stress", label: "Market Stress", Component: MarketStress },
-  { key: "overview", label: "Overview (raw)", Component: Overview },
-  { key: "fundamental", label: "Fundamental Screener", Component: FundamentalScreener },
-  { key: "technical", label: "Technical Analysis", Component: TechnicalAnalysis },
-  { key: "study", label: "Setup Study", Component: SetupStudy },
-  { key: "mag7", label: "MAG7", Component: Mag7 },
-  { key: "portfolio", label: "Portfolio Allocation", Component: PortfolioAllocation },
-  { key: "size", label: "Position Size", Component: PositionSize },
-  { key: "sell", label: "Sell Signals", Component: SellSignals },
-  { key: "reallocation", label: "Reallocation Log", Component: ReallocationLog },
+const VIEWS = [
+  { key: "today", label: "Today", Component: Today },
+  { key: "book", label: "My holdings", Component: MyBook },
+  { key: "setups", label: "Setups", Component: TechnicalAnalysis },
+  { key: "more", label: "More", Component: More },
 ];
 
-const TAB_ALIASES = {
-  vix: "stress",
-  positioning: "reallocation",
+const ALIASES = {
+  today: { view: "today" },
+  opportunities: { view: "today" },
+  overview: { view: "today" },
+  book: { view: "book", section: "risk" },
+  sell: { view: "book", section: "exits" },
+  size: { view: "book", section: "size" },
+  portfolio: { view: "book", section: "holdings" },
+  journal: { view: "book", section: "journal" },
+  setups: { view: "setups" },
+  technical: { view: "setups" },
+  more: { view: "more", section: "status" },
+  stress: { view: "more", section: "stress" },
+  vix: { view: "more", section: "stress" },
+  fundamental: { view: "more", section: "fundamentals" },
+  study: { view: "more", section: "study" },
+  mag7: { view: "more", section: "mag7" },
+  reallocation: { view: "more", section: "log" },
+  positioning: { view: "more", section: "log" },
 };
 
-function initialTab() {
-  if (typeof window === "undefined") return "opportunities";
-  const requested = new URLSearchParams(window.location.search).get("tab");
-  const key = TAB_ALIASES[requested] || requested;
-  return TABS.some((tab) => tab.key === key) ? key : "opportunities";
+function readRoute() {
+  if (typeof window === "undefined") return { view: "today", section: null };
+  const params = new URLSearchParams(window.location.search);
+  const key = params.get("tab") || "today";
+  const alias = ALIASES[key] || { view: "today" };
+  const view = VIEWS.some((item) => item.key === alias.view) ? alias.view : "today";
+  return { view, section: params.get("section") || alias.section || null };
 }
 
 export default function App() {
-  const [active, setActive] = useState(initialTab);
-  const ActiveComponent = TABS.find((t) => t.key === active).Component;
+  const [route, setRoute] = useState(readRoute);
+  const Active = VIEWS.find((item) => item.key === route.view)?.Component || Today;
+
+  const go = (view, section) => {
+    const params = new URLSearchParams();
+    params.set("tab", view);
+    if (section) params.set("section", section);
+    const next = `${window.location.pathname}?${params.toString()}`;
+    window.history.replaceState(null, "", next);
+    setRoute({ view, section: section || null });
+  };
 
   return (
     <div>
@@ -51,14 +63,16 @@ export default function App() {
         <AuthBar />
       </header>
       <nav>
-        {TABS.map((t) => (
-          <button key={t.key} className={active === t.key ? "active" : ""} onClick={() => setActive(t.key)}>
-            {t.label}
+        {VIEWS.map((item) => (
+          <button key={item.key} type="button" className={route.view === item.key ? "active" : ""} onClick={() => go(item.key, item.key === "book" ? "risk" : item.key === "more" ? "status" : null)}>
+            {item.label}
           </button>
         ))}
       </nav>
       <main>
-        <ActiveComponent />
+        {route.view === "book" ? <MyBook section={route.section} onSection={(section) => go("book", section)} /> : null}
+        {route.view === "more" ? <More section={route.section} onSection={(section) => go("more", section)} /> : null}
+        {route.view !== "book" && route.view !== "more" ? <Active /> : null}
       </main>
     </div>
   );

@@ -12,6 +12,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { rejectIfCronUnauthorized } from "../server/cronAuth.js";
+import { sendJob } from "../server/jobLog.js";
 import { buildQuotePayload, historyRow, upsertQuotes } from "../server/buildQuote.js";
 import { loadDailyBars, upsertDailyBars } from "../server/dailyBarsStore.js";
 import { sleep } from "../server/earningsCalendar.js";
@@ -64,7 +65,7 @@ export default async function handler(req, res) {
 
     if (watchlistError) throw watchlistError;
     if (!watchlist || watchlist.length === 0) {
-      return res.status(200).json({ message: "Watchlist is empty, nothing to refresh" });
+      return sendJob(res, 200, { message: "Watchlist is empty, nothing to refresh" }, supabase, "indicators");
     }
 
     const listed = new Set(watchlist.map((row) => row.symbol));
@@ -139,7 +140,7 @@ export default async function handler(req, res) {
       if (historyError) throw historyError;
     }
 
-    return res.status(200).json({
+    return sendJob(res, 200, {
       shard,
       totalShards,
       updated: results.length,
@@ -153,8 +154,8 @@ export default async function handler(req, res) {
       sellColumnsMissing,
       setupColumnsMissing,
       benchmark: BENCHMARK_SYMBOL,
-    });
+    }, supabase, "indicators");
   } catch (err) {
-    return res.status(500).json({ error: "Indicator refresh failed", detail: err.message });
+    return sendJob(res, 500, { error: "Indicator refresh failed", detail: err.message }, supabase, "indicators");
   }
 }

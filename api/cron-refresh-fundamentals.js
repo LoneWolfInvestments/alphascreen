@@ -6,6 +6,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { rejectIfCronUnauthorized } from "../server/cronAuth.js";
+import { sendJob } from "../server/jobLog.js";
 import { isMissingEarningsTableError } from "../server/earningsCalendar.js";
 import {
   BUSINESS_COLUMNS,
@@ -59,7 +60,7 @@ async function fetchAnalystRating(ticker) {
 export default async function handler(req, res) {
   if (rejectIfCronUnauthorized(req, res)) return;
   if (!process.env.FINNHUB_API_KEY) {
-    return res.status(500).json({ error: "FINNHUB_API_KEY not configured" });
+    return sendJob(res, 500, { error: "FINNHUB_API_KEY not configured" }, supabase, "fundamentals");
   }
 
   const shard = parseInt(req.query.shard, 10) || 0;
@@ -68,7 +69,7 @@ export default async function handler(req, res) {
   try {
     const { data: names } = await supabase.from("fundamental_scores").select("ticker").order("ticker", { ascending: true });
     if (!names || names.length === 0) {
-      return res.status(200).json({ message: "No tickers in fundamental_scores yet" });
+      return sendJob(res, 200, { message: "No tickers in fundamental_scores yet" }, supabase, "fundamentals");
     }
     const myShare = names.filter((_, i) => i % totalShards === shard);
 
@@ -109,15 +110,15 @@ export default async function handler(req, res) {
       await new Promise((r) => setTimeout(r, 1100));
     }
 
-    return res.status(200).json({
+    return sendJob(res, 200, {
       shard,
       totalShards,
       updated: results.length,
       failed,
       total: myShare.length,
       businessColumnsMissing,
-    });
+    }, supabase, "fundamentals");
   } catch (err) {
-    return res.status(500).json({ error: "Fundamentals refresh failed", detail: err.message });
+    return sendJob(res, 500, { error: "Fundamentals refresh failed", detail: err.message }, supabase, "fundamentals");
   }
 }

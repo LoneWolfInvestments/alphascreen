@@ -6,6 +6,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { rejectIfCronUnauthorized } from "../server/cronAuth.js";
+import { sendJob } from "../server/jobLog.js";
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 const TWELVE_DATA_BASE = "https://api.twelvedata.com";
@@ -67,5 +68,5 @@ export default async function handler(req, res) {
     }
   }
 
-  return res.status(200).json({ updated: results.length, failed, total: MAG7.length });
+  return sendJob(res, 200, { updated: results.length, failed, total: MAG7.length }, supabase, "mag7");
 }

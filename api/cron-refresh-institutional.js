@@ -14,6 +14,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { rejectIfCronUnauthorized } from "../server/cronAuth.js";
+import { sendJob } from "../server/jobLog.js";
 import { OWNERSHIP_COLUMNS, isMissingColumnError, withoutColumns } from "../src/lib/businessFundamentals.js";
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
@@ -44,7 +45,7 @@ async function fetchInstitutionalData(ticker) {
 export default async function handler(req, res) {
   if (rejectIfCronUnauthorized(req, res)) return;
   if (!process.env.OANOR_API_KEY) {
-    return res.status(500).json({ error: "OANOR_API_KEY not configured" });
+    return sendJob(res, 500, { error: "OANOR_API_KEY not configured" }, supabase, "institutional");
   }
 
   // Sharding: ?shard=0&shards=5 processes every 5th ticker starting at index 0.
@@ -54,7 +55,7 @@ export default async function handler(req, res) {
   try {
     const { data: names } = await supabase.from("fundamental_scores").select("ticker").order("ticker", { ascending: true });
     if (!names || names.length === 0) {
-      return res.status(200).json({ message: "No tickers in fundamental_scores yet" });
+      return sendJob(res, 200, { message: "No tickers in fundamental_scores yet" }, supabase, "institutional");
     }
 
     const myShare = names.filter((_, i) => i % totalShards === shard);
@@ -85,8 +86,8 @@ export default async function handler(req, res) {
       await new Promise((r) => setTimeout(r, 600)); // stay under oanor's 2 req/s free-tier limit
     }
 
-    return res.status(200).json({ shard, totalShards, updated: results.length, failed, total: myShare.length });
+    return sendJob(res, 200, { shard, totalShards, updated: results.length, failed, total: myShare.length }, supabase, "institutional");
   } catch (err) {
-    return res.status(500).json({ error: "Institutional flow refresh failed", detail: err.message });
+    return sendJob(res, 500, { error: "Institutional flow refresh failed", detail: err.message }, supabase, "institutional");
   }
 }

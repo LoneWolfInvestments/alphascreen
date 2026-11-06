@@ -7,6 +7,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { rejectIfCronUnauthorized } from "../server/cronAuth.js";
+import { sendJob } from "../server/jobLog.js";
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 
@@ -38,13 +39,13 @@ async function fetchInsiderSignal(ticker) {
 export default async function handler(req, res) {
   if (rejectIfCronUnauthorized(req, res)) return;
   if (!process.env.FINNHUB_API_KEY) {
-    return res.status(500).json({ error: "FINNHUB_API_KEY not configured" });
+    return sendJob(res, 500, { error: "FINNHUB_API_KEY not configured" }, supabase, "insider");
   }
 
   try {
     const { data: names } = await supabase.from("fundamental_scores").select("ticker");
     if (!names || names.length === 0) {
-      return res.status(200).json({ message: "No tickers in fundamental_scores yet" });
+      return sendJob(res, 200, { message: "No tickers in fundamental_scores yet" }, supabase, "insider");
     }
 
     const results = [];
@@ -63,8 +64,8 @@ export default async function handler(req, res) {
       await new Promise((r) => setTimeout(r, 1100)); // Finnhub free tier: 60 calls/min limit
     }
 
-    return res.status(200).json({ updated: results.length, failed, total: names.length });
+    return sendJob(res, 200, { updated: results.length, failed, total: names.length }, supabase, "insider");
   } catch (err) {
-    return res.status(500).json({ error: "Insider refresh failed", detail: err.message });
+    return sendJob(res, 500, { error: "Insider refresh failed", detail: err.message }, supabase, "insider");
   }
 }
