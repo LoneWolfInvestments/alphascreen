@@ -2,7 +2,8 @@ import React, { useEffect, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 import { previewSample } from "../lib/previewSample";
 import { formatDay } from "../lib/sellSignals";
-import { regimeLabel, ratioTone } from "../lib/marketStress";
+import { presentRegime, regimeLabel, ratioTone } from "../lib/marketStress";
+import { TIMING_NOTE } from "../lib/sessionClock";
 import { sampleMarketStressRows } from "../lib/marketStressSample";
 
 const SPROTT_URANIUM_URL = "https://sprott.com/investment-strategies/exchange-listed-products/physical-commodity-funds/uranium/";
@@ -34,6 +35,15 @@ function useMarketStress() {
 
   const ordered = [...rows].sort((a, b) => (a.as_of < b.as_of ? -1 : a.as_of > b.as_of ? 1 : 0));
   return { sample, rows: ordered, latest: ordered.at(-1) || null, loaded, error };
+}
+
+const SAMPLE_CLOCK = new Date("2026-10-30T17:00:00Z");
+
+function whenDownloaded(value) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toLocaleString();
 }
 
 function Light({ regime, large }) {
@@ -94,16 +104,21 @@ function Sparkline({ rows }) {
   );
 }
 
-function Reading({ row }) {
+function Reading({ row, presentation }) {
   const tone = ratioTone(row.vix_ratio);
   const spy = spyParts(row);
   return (
     <>
       <div className="stress-hero">
-        <Light regime={row.regime} large />
+        <Light regime={presentation.regime} large />
         <div>
-          <p className="stress-reason">{row.reason}</p>
-          <p className="sync-note">As of {formatDay(row.as_of) || row.as_of}.</p>
+          <p className="stress-reason">{presentation.state === "fresh" ? row.reason : presentation.headline}</p>
+          <p className="sync-note">
+            Market session {formatDay(presentation.asOf) || presentation.asOf}.
+            {presentation.spyBarDate && presentation.spyBarDate !== presentation.asOf ? ` SPY session ${formatDay(presentation.spyBarDate)}.` : ""}
+            {whenDownloaded(presentation.fetchedAt) ? ` Downloaded ${whenDownloaded(presentation.fetchedAt)}.` : ""}
+            {" "}The download time is not a new session.
+          </p>
         </div>
       </div>
       <div className="grid-stats">
@@ -134,8 +149,13 @@ function Reading({ row }) {
   );
 }
 
+function clockFor(sample) {
+  return sample ? SAMPLE_CLOCK : new Date();
+}
+
 export function MarketStressBanner() {
   const { sample, latest, loaded, error } = useMarketStress();
+  const presentation = latest ? presentRegime(latest, clockFor(sample)) : null;
   return (
     <div className="panel">
       <h2>Market regime</h2>
@@ -151,10 +171,17 @@ export function MarketStressBanner() {
       {loaded && !error && !latest ? (
         <div className="empty">No market reading yet. It fills in after the nightly job runs.</div>
       ) : null}
-      {latest ? (
+      {presentation ? (
         <div className="stress-banner-body">
-          <Light regime={latest.regime} large />
-          <p className="stress-reason">{latest.reason}</p>
+          <Light regime={presentation.regime} large />
+          <div>
+            <p className="stress-reason">{presentation.state === "fresh" ? latest.reason : presentation.headline}</p>
+            <p className="sync-note">
+              Market session {formatDay(presentation.asOf) || presentation.asOf}.
+              {whenDownloaded(presentation.fetchedAt) ? ` Downloaded ${whenDownloaded(presentation.fetchedAt)}.` : " "}
+              The download time is not a new session.
+            </p>
+          </div>
         </div>
       ) : null}
     </div>
@@ -166,6 +193,7 @@ function History({ rows }) {
   return (
     <>
       <h3>Last {rows.length === 1 ? "day" : `${rows.length} days`}</h3>
+      <p className="sync-note">Each row is that session’s close. It is not a live reading.</p>
       {rows.length > 1 ? (
         <p className="sync-note">The line is the VIX close. The bars under it are that day’s light, oldest on the left.</p>
       ) : null}
@@ -228,10 +256,10 @@ export default function MarketStress() {
         {loaded && !error && !latest ? (
           <div className="empty">No market reading yet. Nothing to type. The first row appears after the nightly job runs.</div>
         ) : null}
-        {latest ? <Reading row={latest} /> : null}
+        {latest ? <Reading row={latest} presentation={presentRegime(latest, clockFor(sample))} /> : null}
         {rows.length > 0 ? <History rows={rows} /> : null}
         <p className="disclaimer">
-          Green means the backdrop is favorable for swing longs: SPY is above a 200-day average that is still rising, VIX is under 20, and VIX is under 95% of the 3-month VIX (a normal, upward-sloping fear curve). Red means the trend is not up, or near-term fear is higher than three-month fear, or VIX is over 30. Anything in between is amber. A calm tape stays amber when SKEW is 150 or higher, or when fewer than 40% of your watchlist names are above their own 200-day average. SKEW and breadth never turn the light red by themselves. This is a backdrop check, not a buy or sell order.
+          {TIMING_NOTE} Green means the backdrop is favorable for swing longs: SPY is above a 200-day average that is still rising, VIX is under 20, and VIX is under 95% of the 3-month VIX (a normal, upward-sloping fear curve). Red means the trend is not up, or near-term fear is higher than three-month fear, or VIX is over 30. Anything in between is amber. A calm tape stays amber when SKEW is 150 or higher, or when fewer than 40% of your watchlist names are above their own 200-day average. SKEW and breadth never turn the light red by themselves. The 200-day average lags the price. This is a backdrop check, not a buy or sell order. A reading from an older session is shown as not current.
         </p>
       </div>
 

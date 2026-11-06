@@ -80,7 +80,12 @@ test("a low RSI in a downtrend is not a buy, and a hot RSI does not flip an uptr
   assert.ok(falling.rsi < 35);
   assert.equal(falling.rsiWarning, "washout");
   assert.match(falling.reason, /not a dip to buy/);
-  const read = technicalReadFromQuote({ setup_label: falling.label, setup_reason: falling.reason, rsi: falling.rsi });
+  const read = technicalReadFromQuote({
+    setup_label: falling.label,
+    setup_reason: falling.reason,
+    rsi: falling.rsi,
+    bar_date: "2026-10-29",
+  }, { now: new Date("2026-10-30T17:00:00Z") });
   assert.equal(read.sig, "Sell");
   assert.notEqual(read.sig, "Buy");
 
@@ -88,7 +93,10 @@ test("a low RSI in a downtrend is not a buy, and a hot RSI does not flip an uptr
   assert.equal(climbing.label, SETUP.UPTREND);
   assert.equal(climbing.trendGate, true);
   assert.equal(climbing.score, undefined);
-  const climbingRead = technicalReadFromQuote(setupToQuoteFields(climbing));
+  const climbingRead = technicalReadFromQuote({
+    ...setupToQuoteFields(climbing),
+    bar_date: "2026-10-29",
+  }, { now: new Date("2026-10-30T17:00:00Z") });
   assert.equal(climbingRead.sig, "Hold");
   assert.notEqual(climbingRead.sig, "Sell");
 });

@@ -61,10 +61,16 @@ export function SellSignalsView({ book, sample, earningsUpdatedAt, drafts, savin
         One row per holding. Red means the trailing stop broke (the exit rule). Amber means decide — trim, hedge, or
         wait for earnings — and is not an order to sell everything. “Don’t add” means the short trend is broken; it does
         not mean sell what you already own. Green means none of the checks fired.
-        {book.asOf ? ` Prices as of ${formatDay(book.asOf)}.` : ""}
-        {book.asOfMixed ? " Price dates differ by holding; each row shows its own as-of date." : ""}
-        {earningsUpdatedAt ? ` Earnings dates refreshed ${formatDay(earningsUpdatedAt) || new Date(earningsUpdatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}.` : ""}
+        {book.asOf ? ` Price session ${formatDay(book.asOf)}.` : ""}
+        {book.asOfMixed ? " Price sessions differ by holding. Each row uses its own session, not the download time." : ""}
+        {earningsUpdatedAt ? ` Earnings list downloaded ${new Date(earningsUpdatedAt).toLocaleString()}. The date in the row is the report date.` : ""}
       </p>
+
+      {counts.stale > 0 && (
+        <div className="sample-banner">
+          {counts.stale} holding{counts.stale === 1 ? "" : "s"} {counts.stale === 1 ? "is" : "are"} not on the latest completed session. Exit, trim, and size checks stay off until a newer session is saved. An earnings date can still show, because that is a calendar date.
+        </div>
+      )}
 
       <div className="grid-4" style={{ marginBottom: 16 }}>
         <div className="stat-box"><div className="label">Exit</div><div className="value" style={{ color: "var(--red)" }}>{counts.red}</div></div>
@@ -99,9 +105,10 @@ export function SellSignalsView({ book, sample, earningsUpdatedAt, drafts, savin
               )}
               {saving === row.ticker && <span className="sync-note">Saving…</span>}
               <span className="sell-price">{formatPrice(row.price)}</span>
-              {(!book.asOf || !row.barDate) && (
-                <span className="sync-note">{row.barDate ? `as of ${formatDay(row.barDate)}` : "no price date yet"}</span>
-              )}
+              <span className="sync-note">
+                {row.barDate ? `Session ${formatDay(row.barDate)}` : "No session date"}
+                {row.fetchedAt ? ` · downloaded ${new Date(row.fetchedAt).toLocaleString()}` : ""}
+              </span>
             </div>
             <div className="sell-metrics">
               <div>
@@ -151,7 +158,7 @@ export function SellSignalsView({ book, sample, earningsUpdatedAt, drafts, savin
                   <td>{theme.tickers.join(", ")}</td>
                   <td>{formatUsd(theme.marketValue)}</td>
                   <td style={{ color: theme.over ? "var(--amber)" : undefined }}>{formatPct(theme.weight * 100)}</td>
-                  <td>{theme.over ? `Trim about ${formatUsd(theme.trimDollars)}` : "Under the limit"}</td>
+                  <td>{theme.unreliable ? "Not current" : theme.over ? `Trim about ${formatUsd(theme.trimDollars)}` : "Under the limit"}</td>
                 </tr>
               ))}
             </tbody>
@@ -160,10 +167,8 @@ export function SellSignalsView({ book, sample, earningsUpdatedAt, drafts, savin
       )}
 
       <p className="disclaimer">
-        The trailing stop is the highest high of the last 22 trading days minus 3 × ATR(22). Overextended means RSI(14)
-        above 80, or the price 40% or more above the 50-day average. Earnings soon means the next report is within 5
-        trading days. Trend broken means two closes in a row under the 50-day average. This matches the daily alert
-        checklist. It is a reminder for you, not a broker order.
+        The trailing stop is the highest high of the last 22 trading days minus 3 × ATR(22). It is not the entry stop on the Technical tab. RSI(14) above 80, or a price 40% or more above the 50-day average, is a trim decision. Both of those are smoothed and lag the price. Earnings soon means the next report is within 5
+        trading days. Trend broken means two closes in a row under the 50-day average, which means don’t add; it is not a second vote to sell. Checks use the saved session, not the time the row was downloaded. This is a reminder, not a broker order.
       </p>
     </div>
   );
@@ -179,25 +184,23 @@ export default function SellSignals() {
   const [saving, setSaving] = useState("");
 
   const load = useCallback(async () => {
-    let portfolio = await supabase.from("portfolio").select("ticker, shares, cost_basis, theme").order("ticker");
+    let [portfolio, quotes, calendar, scores] = await Promise.all([
+      supabase.from("portfolio").select("ticker, shares, cost_basis, theme").order("ticker"),
+      supabase.from("quotes").select("symbol, price, rsi, sma_50, atr_22, high_22, chandelier_stop, below_sma50_streak, bar_date, updated_at"),
+      supabase.from("earnings_calendar").select("symbol, next_earnings_date, updated_at"),
+      supabase.from("fundamental_scores").select("ticker, next_earnings_date"),
+    ]);
     if (portfolio.error && /theme/i.test(portfolio.error.message || "")) {
       portfolio = await supabase.from("portfolio").select("ticker, shares, cost_basis").order("ticker");
+    }
+    if (quotes.error && /atr_22|high_22|chandelier_stop|below_sma50_streak|bar_date|updated_at/i.test(quotes.error.message || "")) {
+      quotes = await supabase.from("quotes").select("symbol, price, rsi, sma_50");
     }
     if (portfolio.error) {
       setError(portfolio.error.message);
       setBook(null);
       return;
     }
-
-    let quotes = await supabase
-      .from("quotes")
-      .select("symbol, price, rsi, sma_50, atr_22, high_22, chandelier_stop, below_sma50_streak, bar_date");
-    if (quotes.error && /atr_22|high_22|chandelier_stop|below_sma50_streak|bar_date/i.test(quotes.error.message || "")) {
-      quotes = await supabase.from("quotes").select("symbol, price, rsi, sma_50");
-    }
-
-    const calendar = await supabase.from("earnings_calendar").select("symbol, next_earnings_date, updated_at");
-    const scores = await supabase.from("fundamental_scores").select("ticker, next_earnings_date");
     const calendarRows = calendar.error ? [] : (calendar.data || []);
     const latest = calendarRows.reduce(
       (max, row) => (!max || (row.updated_at && row.updated_at > max) ? row.updated_at : max),
@@ -210,6 +213,7 @@ export default function SellSignals() {
       quotesBySymbol: indexQuotes(quotes.data || []),
       earningsBySymbol: indexEarnings(calendarRows, scores.data || []),
       today: nyToday(),
+      now: new Date(),
     }));
     setError("");
   }, []);

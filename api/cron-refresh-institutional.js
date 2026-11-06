@@ -14,6 +14,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { rejectIfCronUnauthorized } from "../server/cronAuth.js";
+import { OWNERSHIP_COLUMNS, isMissingColumnError, withoutColumns } from "../src/lib/businessFundamentals.js";
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 
@@ -64,12 +65,19 @@ export default async function handler(req, res) {
     for (const { ticker } of myShare) {
       try {
         const { buyers, sellers, netBreadthPct } = await fetchInstitutionalData(ticker);
-        await supabase.from("fundamental_scores").update({
+        let update = {
           inst_buyers: buyers,
           inst_sellers: sellers,
           inst_net_breadth: netBreadthPct,
+          ownership_fetched_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
-        }).eq("ticker", ticker);
+        };
+        let { error } = await supabase.from("fundamental_scores").update(update).eq("ticker", ticker);
+        if (error && isMissingColumnError(error, OWNERSHIP_COLUMNS)) {
+          update = withoutColumns(update, OWNERSHIP_COLUMNS);
+          ({ error } = await supabase.from("fundamental_scores").update(update).eq("ticker", ticker));
+        }
+        if (error) throw error;
         results.push(ticker);
       } catch (err) {
         failed.push({ ticker, error: err.message });

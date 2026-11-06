@@ -1,31 +1,37 @@
 // api/cron-refresh-fundamentals.js
-// Pulls P/E, market cap, EPS, margin, next earnings date, and analyst consensus
-// from Finnhub's free tier (Twelve Data's equivalents are all paid-only —
-// confirmed by testing). Runs weekly, sharded to respect rate limits.
+// Pulls company metrics, the next earnings date, and analyst consensus from
+// Finnhub's free tier. Twelve Data's fundamental endpoints are paid.
+// Same three calls per ticker as before. Extra growth and margin fields come
+// out of the metrics response that was already downloaded. Weekly, sharded.
 
 import { createClient } from "@supabase/supabase-js";
 import { rejectIfCronUnauthorized } from "../server/cronAuth.js";
 import { isMissingEarningsTableError } from "../server/earningsCalendar.js";
+import {
+  BUSINESS_COLUMNS,
+  analystPeriodFromRecommendation,
+  factsFromFinnhubPayload,
+  isMissingColumnError,
+  withoutColumns,
+} from "../src/lib/businessFundamentals.js";
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 
-async function fetchMetrics(ticker) {
-  const url = `https://finnhub.io/api/v1/stock/metric?symbol=${ticker}&metric=all&token=${process.env.FINNHUB_API_KEY}`;
+async function fetchBasicFinancials(ticker) {
+  const url = `https://finnhub.io/api/v1/stock/metric?symbol=${encodeURIComponent(ticker)}&metric=all&token=${process.env.FINNHUB_API_KEY}`;
   const res = await fetch(url);
   const data = await res.json();
-  const m = data.metric || {};
-  return {
-    pe_ratio: m.peBasicExclExtraTTM ?? null,
-    market_cap: m.marketCapitalization != null ? m.marketCapitalization * 1e6 : null, // Finnhub returns millions
-    eps: m.epsInclExtraItemsTTM ?? m.epsBasicExclExtraItemsTTM ?? null,
-    profit_margin: m.netProfitMarginTTM != null ? m.netProfitMarginTTM / 100 : null, // Finnhub returns as percent
-  };
+  if (!res.ok || data.error || !data.metric) {
+    const detail = typeof data.error === "string" ? data.error : "Finnhub metrics request failed";
+    throw new Error(detail);
+  }
+  return data;
 }
 
 async function fetchNextEarnings(ticker) {
   const today = new Date().toISOString().slice(0, 10);
   const future = new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  const url = `https://finnhub.io/api/v1/calendar/earnings?from=${today}&to=${future}&symbol=${ticker}&token=${process.env.FINNHUB_API_KEY}`;
+  const url = `https://finnhub.io/api/v1/calendar/earnings?from=${today}&to=${future}&symbol=${encodeURIComponent(ticker)}&token=${process.env.FINNHUB_API_KEY}`;
   const res = await fetch(url);
   const data = await res.json();
   const upcoming = (data.earningsCalendar || [])[0];
@@ -33,18 +39,21 @@ async function fetchNextEarnings(ticker) {
 }
 
 async function fetchAnalystRating(ticker) {
-  const url = `https://finnhub.io/api/v1/stock/recommendation?symbol=${ticker}&token=${process.env.FINNHUB_API_KEY}`;
+  const url = `https://finnhub.io/api/v1/stock/recommendation?symbol=${encodeURIComponent(ticker)}&token=${process.env.FINNHUB_API_KEY}`;
   const res = await fetch(url);
   const data = await res.json();
   const latest = Array.isArray(data) ? data[0] : null;
-  if (!latest) return null;
+  if (!latest) return { analyst_rating: null, analyst_period: null };
   const bullish = (latest.strongBuy || 0) + (latest.buy || 0);
   const bearish = (latest.strongSell || 0) + (latest.sell || 0);
   const total = bullish + bearish + (latest.hold || 0);
-  if (total === 0) return null;
-  if (bullish / total > 0.6) return "Buy";
-  if (bearish > bullish) return "Sell";
-  return "Hold";
+  let analyst_rating = null;
+  if (total > 0) {
+    if (bullish / total > 0.6) analyst_rating = "Buy";
+    else if (bearish > bullish) analyst_rating = "Sell";
+    else analyst_rating = "Hold";
+  }
+  return { analyst_rating, analyst_period: analystPeriodFromRecommendation(data) };
 }
 
 export default async function handler(req, res) {
@@ -65,23 +74,28 @@ export default async function handler(req, res) {
 
     const results = [];
     const failed = [];
+    let businessColumnsMissing = false;
 
     for (const { ticker } of myShare) {
       try {
-        const [metrics, nextEarnings, rating] = await Promise.all([
-          fetchMetrics(ticker),
+        const [financials, nextEarnings, analyst] = await Promise.all([
+          fetchBasicFinancials(ticker),
           fetchNextEarnings(ticker),
           fetchAnalystRating(ticker),
         ]);
-        await supabase.from("fundamental_scores").update({
-          ...metrics,
+        let update = {
+          ...factsFromFinnhubPayload(financials, { fetchedAt: new Date().toISOString() }),
           next_earnings_date: nextEarnings,
-          analyst_rating: rating,
+          ...analyst,
           updated_at: new Date().toISOString(),
-        }).eq("ticker", ticker);
-        // Same earnings date the call above already fetched. Best-effort so a
-        // project that has not run schema-sell-signals.sql yet still updates
-        // the screener.
+        };
+        let { error } = await supabase.from("fundamental_scores").update(update).eq("ticker", ticker);
+        if (error && isMissingColumnError(error, BUSINESS_COLUMNS)) {
+          businessColumnsMissing = true;
+          update = withoutColumns(update, BUSINESS_COLUMNS);
+          ({ error } = await supabase.from("fundamental_scores").update(update).eq("ticker", ticker));
+        }
+        if (error) throw error;
         const { error: calendarError } = await supabase.from("earnings_calendar").upsert({
           symbol: ticker,
           next_earnings_date: nextEarnings,
@@ -92,10 +106,17 @@ export default async function handler(req, res) {
       } catch (err) {
         failed.push({ ticker, error: err.message });
       }
-      await new Promise((r) => setTimeout(r, 1100)); // Finnhub free tier: 60 calls/min limit
+      await new Promise((r) => setTimeout(r, 1100));
     }
 
-    return res.status(200).json({ shard, totalShards, updated: results.length, failed, total: myShare.length });
+    return res.status(200).json({
+      shard,
+      totalShards,
+      updated: results.length,
+      failed,
+      total: myShare.length,
+      businessColumnsMissing,
+    });
   } catch (err) {
     return res.status(500).json({ error: "Fundamentals refresh failed", detail: err.message });
   }
