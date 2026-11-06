@@ -1,7 +1,8 @@
 {
   "functions": {
     "api/cron-refresh-indicators.js": { "maxDuration": 60 },
-    "api/backfill-history.js": { "maxDuration": 60 }
+    "api/backfill-history.js": { "maxDuration": 60 },
+    "api/cron-record-signals.js": { "maxDuration": 60 }
   },
   "crons": [
     { "path": "/api/cron-refresh-indicators?shard=0&shards=7", "schedule": "0 22 * * 1-5" },
@@ -28,6 +29,8 @@
 
     { "path": "/api/cron-refresh-market-stress", "schedule": "0 5 * * 2-6" },
 
-    { "path": "/api/cron-refresh-earnings", "schedule": "30 21 * * 1-5" }
+    { "path": "/api/cron-refresh-earnings", "schedule": "30 21 * * 1-5" },
+
+    { "path": "/api/cron-record-signals", "schedule": "0 6 * * 2-6" }
   ]
 }
