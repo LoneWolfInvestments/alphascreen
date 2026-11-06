@@ -38,6 +38,11 @@ button.action.danger { background: var(--red); padding: 4px 8px; font-size: 11px
 .add-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; margin-bottom: 12px; }
 .add-form label { display: block; font-size: 11px; color: var(--text-dim); margin-bottom: 3px; }
 .field { min-width: 90px; }
+.size-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 16px; margin-bottom: 12px; }
+.size-form .field { min-width: 0; }
+.size-form input { width: 100%; }
+.field-error { color: var(--red); font-size: 12px; margin: 4px 0 0; }
+@media (max-width: 800px) { .size-form { grid-template-columns: 1fr; } }
 .empty { color: var(--text-dim); font-style: italic; padding: 20px; text-align: center; }
 .sync-note { font-size: 11px; color: var(--text-dim); }
 .disclaimer { font-size: 11px; color: var(--text-dim); border-top: 1px solid var(--border); padding-top: 10px; margin-top: 10px; }
