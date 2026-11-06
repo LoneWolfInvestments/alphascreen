@@ -14,6 +14,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { rejectIfCronUnauthorized } from "../server/cronAuth.js";
+import { sendJob } from "../server/jobLog.js";
 import { fetchCboeSnapshot } from "../server/cboeHistory.js";
 import { buildStressRow, closesBySymbol } from "../src/lib/marketStress.js";
 
@@ -109,14 +110,14 @@ export default async function handler(req, res) {
       .upsert({ ...row, updated_at: new Date().toISOString() }, { onConflict: "as_of" });
     if (error) {
       if (missingRelation(error, "market_stress")) {
-        return res.status(500).json({
+        return sendJob(res, 500, {
           error: "market_stress table is missing. Paste the contents of schema-market-stress.sql into the Supabase SQL Editor and run them.",
-        });
+        }, supabase, "market-stress");
       }
       throw error;
     }
 
-    return res.status(200).json({
+    return sendJob(res, 200, {
       as_of: row.as_of,
       regime: row.regime,
       vix: row.vix,
@@ -125,8 +126,8 @@ export default async function handler(req, res) {
       spy_above_sma200: row.spy_above_sma200,
       breadth_pct: row.breadth_pct,
       breadth_total: row.breadth_total,
-    });
+    }, supabase, "market-stress");
   } catch (err) {
-    return res.status(500).json({ error: "Market stress refresh failed", detail: err.message });
+    return sendJob(res, 500, { error: "Market stress refresh failed", detail: err.message }, supabase, "market-stress");
   }
 }

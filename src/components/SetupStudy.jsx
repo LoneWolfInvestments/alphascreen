@@ -9,6 +9,7 @@ import {
   eventsToCsv,
   studySetups,
 } from "../lib/setupStudy";
+import { simulateBook } from "../lib/strategySim";
 import {
   breakoutTodayBars,
   downtrendBars,
@@ -118,7 +119,40 @@ function Coverage({ study }) {
   );
 }
 
-export function SetupStudyView({ study, sample, onDownload }) {
+function percentPoints(value) {
+  if (!Number.isFinite(value)) return "withheld";
+  const points = value * 100;
+  const sign = points > 0 ? "+" : "";
+  return `${sign}${points.toFixed(1)}%`;
+}
+
+function RuleCheck({ simulation, slippageText, onSlippage }) {
+  if (!simulation) return null;
+  const later = simulation.evaluation;
+  return (
+    <section>
+      <h3>Fixed rule check</h3>
+      <p className="sync-note">
+        {simulation.name}. This is separate from the forward-return table above. Averages are per trade, not a portfolio return. The later window is the last 30% of signals by date. Changing the cost assumption does not refit the entry or the exit. Company figures are not used.
+      </p>
+      <div className="field" style={{ maxWidth: 220, marginBottom: 8 }}>
+        <label htmlFor="slippage-bps">Assumed slippage each side (%)</label>
+        <input id="slippage-bps" value={slippageText} onChange={(event) => onSlippage(event.target.value)} />
+      </div>
+      <p className="sync-note">Using {(simulation.slippage * 100).toFixed(2)}% each side on the entry and the exit. That is an assumption, not a broker fee. The same assumption is applied to SPY when an excess is shown.</p>
+      <ul className="plain-list">
+        {simulation.rules.map((rule) => <li key={rule}>{rule}</li>)}
+      </ul>
+      <p>
+        Closed trades in the later window: {later.closed}. Still open: {later.open}. Incomplete bars: {later.incomplete}.
+        {later.withheld ? " The average is withheld because fewer than 20 closed trades are in that later window." : ` Average trade after the cost assumption ${percentPoints(later.avgNet)}. Average excess versus SPY ${percentPoints(later.avgExcess)} (${later.excessCount} with a SPY bar on both dates).`}
+      </p>
+      <p className="sync-note">Earlier window closed trades: {simulation.development.closed}. That window is not the result to lean on. Overlap signals skipped while a trade was open: {simulation.skippedOverlap}. Names still short of 200 sessions: {simulation.warmup}.</p>
+    </section>
+  );
+}
+
+export function SetupStudyView({ study, sample, onDownload, simulation, slippageText, onSlippage }) {
   const finished = study.events.filter((event) => event.status === "completed" && event.independent).length;
   return (
     <div className="panel">
@@ -148,6 +182,7 @@ export function SetupStudyView({ study, sample, onDownload }) {
       <ul className="why">
         {study.notes.map((note) => <li key={note}>{note}</li>)}
       </ul>
+      <RuleCheck simulation={simulation} slippageText={slippageText} onSlippage={onSlippage} />
     </div>
   );
 }
@@ -157,6 +192,7 @@ export default function SetupStudy() {
   const [rows, setRows] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(!sample);
+  const [slippageText, setSlippageText] = useState("0.05");
 
   useEffect(() => {
     if (sample) return undefined;
@@ -181,12 +217,18 @@ export default function SetupStudy() {
     };
   }, [sample]);
 
-  const study = useMemo(() => {
-    if (sample) return studySetups(sampleSeries());
-    if (!rows) return null;
-    const grouped = barsBySymbolFromRows(rows);
-    return studySetups(grouped.series);
+  const prepared = useMemo(() => {
+    const series = sample ? sampleSeries() : rows ? barsBySymbolFromRows(rows).series : null;
+    if (!series) return null;
+    return { series, study: studySetups(series) };
   }, [rows, sample]);
+  const study = prepared?.study || null;
+  const simulation = useMemo(() => {
+    if (!prepared) return null;
+    const parsed = Number(slippageText);
+    const slippage = Number.isFinite(parsed) && parsed >= 0 && parsed < 25 ? parsed / 100 : 0.0005;
+    return simulateBook({ seriesBySymbol: prepared.series, slippage });
+  }, [prepared, slippageText]);
 
   const onDownload = () => {
     if (!study) return;
@@ -213,5 +255,14 @@ export default function SetupStudy() {
       </div>
     );
   }
-  return <SetupStudyView study={study} sample={sample} onDownload={onDownload} />;
+  return (
+    <SetupStudyView
+      study={study}
+      sample={sample}
+      onDownload={onDownload}
+      simulation={simulation}
+      slippageText={slippageText}
+      onSlippage={setSlippageText}
+    />
+  );
 }

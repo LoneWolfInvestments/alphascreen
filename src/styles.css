@@ -15,6 +15,11 @@ header h1 span { color: var(--accent); }
 nav { display: flex; gap: 4px; padding: 0 20px; border-bottom: 1px solid var(--border); overflow-x: auto; background: var(--panel); }
 nav button { background: none; border: none; color: var(--text-dim); padding: 12px 14px; font-size: 13px; cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; }
 nav button.active { color: var(--accent); border-bottom-color: var(--accent); }
+.subnav { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 12px; }
+.subnav button { background: var(--panel); border: 1px solid var(--border); color: var(--text-dim); border-radius: 999px; padding: 6px 12px; cursor: pointer; }
+.subnav button.active { color: var(--text); border-color: var(--accent); }
+.plain-list { margin: 8px 0 12px; padding-left: 18px; color: var(--text-dim); }
+.plain-list li { margin: 4px 0; }
 main { padding: 20px; max-width: 1280px; margin: 0 auto; }
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
 .panel h2 { margin: 0 0 12px 0; font-size: 15px; }
