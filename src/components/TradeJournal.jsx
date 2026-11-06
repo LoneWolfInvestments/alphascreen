@@ -3,6 +3,7 @@ import { supabase } from "../lib/supabaseClient";
 import { previewSample } from "../lib/previewSample";
 import { useOwnerSession } from "../hooks/useOwnerSession";
 import { monthlyReview, planSnapshot, realisedResult, validateJournalEntry, SINGLE_FILL_LIMIT } from "../lib/tradeJournal";
+import ModelSignalRecord from "./ModelSignalRecord";
 import { formatUsdFromCents } from "../lib/positionSize";
 
 const EMPTY = {
@@ -167,8 +168,9 @@ export default function TradeJournal() {
       <h2>Trade journal</h2>
       {sample ? <div className="sample-banner">Sample notes. Nothing is saved.</div> : null}
       <p className="disclaimer" style={{ marginTop: 0, marginBottom: 12, borderTop: "none", paddingTop: 0 }}>
-        {SINGLE_FILL_LIMIT} Only you can read these notes. Saving a note does not buy, sell, or edit a holding.
+        {SINGLE_FILL_LIMIT} Only you can read these notes. Saving a note does not buy, sell, or edit a holding. The Buy candidate record is a separate model result. It does not create these notes, and these notes do not create a model result.
       </p>
+      <ModelSignalRecord sample={sample} notes={rows} />
       {notice ? <p>{notice}</p> : null}
       <div className="size-form">
         <Field id="journal-ticker" label="Ticker" value={form.ticker} onChange={set("ticker")} />

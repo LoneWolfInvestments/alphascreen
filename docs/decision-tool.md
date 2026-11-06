@@ -19,3 +19,11 @@ After the site update is live, run these two files in the Supabase SQL editor, i
 2. `schema-job-runs.sql`
 
 The journal is one entry and one exit per note. It does not change the holdings table. Job history starts empty. Empty means no run has been recorded yet, which is not the same as a failed run.
+
+## Buy candidate record
+
+After this update is live, run `schema-model-signals.sql` in the Supabase SQL editor. Paste the whole file. It does not start a job and it does not read your holdings or your journal.
+
+The record is written by one weekday-night job at 06:00 UTC, after the price shards and the market-light hour. That is 1:00 AM Eastern standard time, or 2:00 AM when daylight saving time is in effect. Vercel may start it any time during that hour. It does not call the price or company-data providers. It uses the watchlist quotes already saved. If any watchlist name is not on that completed session, that night saves no new candidate. A name that stays a Buy candidate is one episode, not a new buy every day. The first run starts the record from that night forward. It does not invent earlier wins.
+
+The study page and the journal both show the record. The journal notes stay private. A matching ticker is labelled as your note, not as the model result. Win rate uses only finished wins and losses. Untriggered, expired, open, ambiguous, and incomplete rows stay visible and out of that average until at least 20 wins and losses exist.

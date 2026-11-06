@@ -10,6 +10,7 @@ import {
   studySetups,
 } from "../lib/setupStudy";
 import { simulateBook } from "../lib/strategySim";
+import ModelSignalRecord from "./ModelSignalRecord";
 import {
   breakoutTodayBars,
   downtrendBars,
@@ -183,6 +184,7 @@ export function SetupStudyView({ study, sample, onDownload, simulation, slippage
         {study.notes.map((note) => <li key={note}>{note}</li>)}
       </ul>
       <RuleCheck simulation={simulation} slippageText={slippageText} onSlippage={onSlippage} />
+      <ModelSignalRecord sample={sample} />
     </div>
   );
 }
@@ -242,16 +244,29 @@ export default function SetupStudy() {
   };
 
   if (loading) {
-    return <div className="panel"><h2>Setup Study</h2><p>Reading saved daily prices…</p></div>;
+    return (
+      <div>
+        <div className="panel"><h2>Setup Study</h2><p>Reading saved daily prices…</p></div>
+        <ModelSignalRecord sample={sample} />
+      </div>
+    );
   }
   if (error) {
-    return <div className="panel"><h2>Setup Study</h2><p>{error}</p></div>;
+    return (
+      <div>
+        <div className="panel"><h2>Setup Study</h2><p>{error}</p></div>
+        <ModelSignalRecord sample={sample} />
+      </div>
+    );
   }
   if (!study || (study.coverage.length === 0 && !sample)) {
     return (
-      <div className="panel">
-        <h2>Setup Study</h2>
-        <div className="empty">No saved daily prices yet. The weekday night job fills them. This page does not start a download.</div>
+      <div>
+        <div className="panel">
+          <h2>Setup Study</h2>
+          <div className="empty">No saved daily prices yet. The weekday night job fills them. This page does not start a download.</div>
+        </div>
+        <ModelSignalRecord sample={sample} />
       </div>
     );
   }
