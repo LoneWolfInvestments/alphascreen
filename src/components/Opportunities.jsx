@@ -1,36 +1,13 @@
-// src/components/Opportunities.jsx
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 import { useOwnerSession } from "../hooks/useOwnerSession";
 import { earningsDateFor, useEarningsMap } from "../hooks/useEarningsMap";
-import { blocksNewBuy, isEarningsSoon, nyToday, tradingDaysUntil } from "../lib/sellSignals";
+import { buildSellBook, isEarningsSoon, nyToday, tradingDaysUntil } from "../lib/sellSignals";
 import { technicalReadFromQuote } from "../lib/swingSetups";
+import { readAnalyst, readBusinessFundamentals, readOwnership } from "../lib/businessFundamentals";
+import { CATEGORIES, TIMING_NOTE, categoryTone, decideAction } from "../lib/signalBoard";
+import { presentRegime } from "../lib/marketStress";
 
-function fundamentalRead(f) {
-  if (!f) return { score: null, sig: null, reasons: [] };
-  const hasBreadth = f.inst_net_breadth != null;
-  const hasAnalyst = !!f.analyst_rating;
-  if (!hasBreadth && !hasAnalyst) return { score: null, sig: null, reasons: [] };
-
-  const reasons = [];
-  if (hasBreadth) reasons.push(`Institutional breadth ${f.inst_net_breadth > 0 ? "+" : ""}${f.inst_net_breadth.toFixed(1)}% (${f.inst_buyers} buyers vs ${f.inst_sellers} sellers)`);
-  if (hasAnalyst) reasons.push(`Analyst consensus: ${f.analyst_rating}`);
-
-  const breadthPoints = hasBreadth ? f.inst_net_breadth / 50 : 0;
-  const analystPoints = f.analyst_rating === "Buy" ? 1 : f.analyst_rating === "Sell" ? -1 : 0;
-  const inputs = (hasBreadth ? 1 : 0) + (hasAnalyst ? 1 : 0);
-  const combined = (breadthPoints + analystPoints) / inputs;
-
-  const score = hasBreadth ? Math.round(50 + f.inst_net_breadth) : null;
-  let sig = "Hold";
-  if (combined > 0.3) sig = "Buy";
-  else if (combined < -0.3) sig = "Sell";
-  return { score, sig, reasons };
-}
-function technicalRead(q) {
-  const read = technicalReadFromQuote(q);
-  return { sig: read.sig, label: read.label, reasons: read.reasons };
-}
 function earningsReason(dateStr, today) {
   if (!isEarningsSoon(dateStr, today)) return null;
   const days = tradingDaysUntil(today, dateStr);
@@ -42,19 +19,23 @@ export default function Opportunities() {
   const { ready, session } = useOwnerSession();
   const { bySymbol } = useEarningsMap();
   const today = nyToday();
+  const now = new Date();
   const [fundamental, setFundamental] = useState([]);
   const [quotes, setQuotes] = useState([]);
   const [portfolio, setPortfolio] = useState([]);
+  const [regimeRow, setRegimeRow] = useState(null);
 
   const loadAll = useCallback(async () => {
-    const [f, q, p] = await Promise.all([
+    const [f, q, p, stress] = await Promise.all([
       supabase.from("fundamental_scores").select("*"),
       supabase.from("quotes").select("*"),
       supabase.from("portfolio").select("*"),
+      supabase.from("market_stress").select("*").order("as_of", { ascending: false }).limit(1),
     ]);
     setFundamental(f.data || []);
     setQuotes(q.data || []);
     setPortfolio(p.data || []);
+    setRegimeRow(stress.error ? null : (stress.data || [])[0] || null);
   }, []);
 
   useEffect(() => {
@@ -66,102 +47,93 @@ export default function Opportunities() {
     return () => { supabase.removeChannel(c1); supabase.removeChannel(c2); supabase.removeChannel(c3); };
   }, [loadAll, ready, session?.user?.id]);
 
+  const regime = presentRegime(regimeRow, now);
+  const earningsBySymbol = {};
+  for (const [symbol, value] of Object.entries(bySymbol || {})) {
+    earningsBySymbol[symbol] = value?.date || null;
+  }
+  const sellBook = buildSellBook({
+    holdings: portfolio,
+    quotesBySymbol: Object.fromEntries(quotes.map((row) => [row.symbol, row])),
+    earningsBySymbol,
+    today,
+    now,
+  });
+  const sellByTicker = Object.fromEntries(sellBook.rows.map((row) => [row.ticker, row]));
   const tickers = Array.from(new Set([
-    ...fundamental.map((r) => r.ticker),
-    ...quotes.map((r) => r.symbol),
-    ...portfolio.map((r) => r.ticker),
+    ...fundamental.map((row) => row.ticker),
+    ...quotes.map((row) => row.symbol),
+    ...portfolio.map((row) => row.ticker),
   ]));
 
   const rows = tickers.map((ticker) => {
-    const f = fundamental.find((r) => r.ticker === ticker);
-    const q = quotes.find((r) => r.symbol === ticker);
-    const p = portfolio.find((r) => r.ticker === ticker);
-
-    const { score: fScore, sig: fSig, reasons: fReasons } = fundamentalRead(f);
-    const { sig: tSig, label: tLabel, reasons: tReasons } = technicalRead(q);
+    const f = fundamental.find((row) => row.ticker === ticker);
+    const q = quotes.find((row) => row.symbol === ticker);
+    const p = portfolio.find((row) => row.ticker === ticker);
+    const business = readBusinessFundamentals(f, { now });
+    const technical = technicalReadFromQuote(q, { now });
     const held = !!p;
-
     const earnDate = earningsDateFor(bySymbol, ticker, f?.next_earnings_date);
     const soon = isEarningsSoon(earnDate, today);
+    const decision = decideAction({
+      business,
+      ownership: readOwnership(f),
+      analyst: readAnalyst(f),
+      technical,
+      sell: sellByTicker[ticker] ? { status: sellByTicker[ticker].status, stop: sellByTicker[ticker].stop } : null,
+      held,
+      earningsSoon: soon,
+      regime: regime.state === "fresh" ? regime : null,
+    });
     const earnReason = earningsReason(earnDate, today);
-
-    let category, priority, headline;
-    if (blocksNewBuy({ held, fundamentalSignal: fSig, technicalSignal: tSig, earningsSoon: soon })) {
-      category = "Earnings soon — skip new buy"; priority = 0;
-      headline = "Reporting within 5 trading days, so it stays off the new-buy list until after the report.";
-    } else if (!held && fSig === "Buy" && tSig === "Buy") {
-      category = "New Buy Candidate"; priority = 0;
-      headline = "Fundamentals and technicals both bullish, not currently held";
-    } else if (held && fSig === "Buy" && tSig === "Buy") {
-      category = "Add to Existing Position"; priority = 1;
-      headline = "Already held — both signals bullish, worth considering adding";
-    } else if (held && (fSig === "Sell" || tSig === "Sell")) {
-      category = "Review Position"; priority = 2;
-      headline = "Currently held but showing a bearish signal — worth a closer look";
-    } else if (fSig && tSig && fSig !== tSig && fSig !== "Hold" && tSig !== "Hold") {
-      category = "Conflicting — Watch"; priority = 3;
-      headline = `Fundamental says ${fSig}, technical says ${tSig} — disagreement itself is informative`;
-    } else if (fSig || tSig) {
-      category = "Neutral / Mixed"; priority = 4;
-      headline = "No strong signal either way right now";
-    } else {
-      category = "Insufficient Data"; priority = 5;
-      headline = "Add fundamental scores and/or ensure it's in the live watchlist";
-    }
-
     return {
-      ticker, fScore, fSig, tSig, tLabel, held, soon,
-      price: q?.price, category, priority, headline,
-      allReasons: [...fReasons, ...tReasons, earnReason].filter(Boolean),
+      ticker,
+      held,
+      soon,
+      price: q?.price,
+      priceSession: technical.barDate,
+      decision,
+      earnReason,
     };
   });
 
-  rows.sort((a, b) => a.priority - b.priority || (b.fScore || 0) - (a.fScore || 0));
-
-  const categories = ["Earnings soon — skip new buy", "New Buy Candidate", "Add to Existing Position", "Review Position", "Conflicting — Watch", "Neutral / Mixed", "Insufficient Data"];
-  const categoryColor = {
-    "Earnings soon — skip new buy": "#f0b955",
-    "New Buy Candidate": "#3ecf8e",
-    "Add to Existing Position": "#4f8dfd",
-    "Review Position": "#f0555a",
-    "Conflicting — Watch": "#f0b955",
-    "Neutral / Mixed": "#8b93a7",
-    "Insufficient Data": "#8b93a7",
-  };
+  rows.sort((a, b) => a.decision.priority - b.decision.priority || (b.decision.businessScore || 0) - (a.decision.businessScore || 0));
 
   return (
     <div className="panel">
       <h2>Opportunities</h2>
       <p className="disclaimer" style={{ marginTop: 0, marginBottom: 12, borderTop: "none", paddingTop: 0 }}>
-        Ranks every ticker into an actionable bucket. A technical Buy is a Breakout or a Pullback in an uptrend,
-        not a low RSI. Names reporting within 5 trading days are pulled out of the new-buy list. "Review Position"
-        flags names you hold that are now in a downtrend. This is a triage tool, not a trade instruction — read the
-        reason before acting.
+        The business read and the price setup are kept apart. A name lands in a bucket only when those reads are from a current session or a current company snapshot. Ownership, analyst opinions, RSI, and the market light are context, not extra votes.
+        {" "}{TIMING_NOTE}
+        {regime.state === "missing" ? " No market-regime row is saved, so nothing is assumed calm or stressed." : ` Market session ${regime.asOf || "unknown"} is ${regime.state === "fresh" ? regime.regime : "not current"}.`}
         {ready && !session ? " Sign in so positions you already hold are marked as held." : ""}
       </p>
 
-      {categories.map((cat) => {
-        const catRows = rows.filter((r) => r.category === cat);
+      {CATEGORIES.map((category) => {
+        const catRows = rows.filter((row) => row.decision.category === category);
         if (catRows.length === 0) return null;
+        const color = categoryTone(category);
         return (
-          <div key={cat} style={{ marginBottom: 20 }}>
-            <h3 style={{ color: categoryColor[cat] }}>{cat} ({catRows.length})</h3>
+          <div key={category} style={{ marginBottom: 20 }}>
+            <h3 style={{ color }}>{category} ({catRows.length})</h3>
             <div className="table-wrap">
               <table>
                 <thead>
-                  <tr><th>Ticker</th><th>Price</th><th>Fundamental</th><th>Setup</th><th>Why</th></tr>
+                  <tr><th>Ticker</th><th>Price</th><th>Session</th><th>Business</th><th>Setup</th><th>Why</th></tr>
                 </thead>
                 <tbody>
-                  {catRows.map((r) => (
-                    <tr key={r.ticker}>
-                      <td><strong className={r.soon ? "earn-soon" : undefined}>{r.ticker}</strong></td>
-                      <td>{r.price != null ? Number(r.price).toFixed(2) : "—"}</td>
-                      <td>{r.fSig ? `${r.fSig} (${r.fScore})` : "—"}</td>
-                      <td>{r.tLabel || "—"}</td>
+                  {catRows.map((row) => (
+                    <tr key={row.ticker}>
+                      <td><strong className={row.soon ? "earn-soon" : undefined}>{row.ticker}</strong></td>
+                      <td>{row.price != null ? Number(row.price).toFixed(2) : "—"}</td>
+                      <td>{row.priceSession || "—"}</td>
+                      <td>{row.decision.businessSignal ? `${row.decision.businessSignal}${row.decision.businessScore != null ? ` (${row.decision.businessScore})` : ""}` : "—"}</td>
+                      <td>{row.decision.technicalLabel || "—"}</td>
                       <td style={{ whiteSpace: "normal", fontSize: 12 }}>
-                        {r.headline}
-                        {r.allReasons.length > 0 && (
-                          <div style={{ color: "#8b93a7", marginTop: 2 }}>{r.allReasons.join(" · ")}</div>
+                        {row.decision.headline}
+                        {row.earnReason ? <div style={{ color: "#8b93a7", marginTop: 2 }}>{row.earnReason}</div> : null}
+                        {row.decision.reasons.length > 0 && (
+                          <div style={{ color: "#8b93a7", marginTop: 2 }}>{row.decision.reasons.join(" ")}</div>
                         )}
                       </td>
                     </tr>

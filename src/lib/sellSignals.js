@@ -1,6 +1,10 @@
 // Pure sell-rule checks shared by the Sell Signals panel and the tests.
 // Nothing here talks to the network or the database.
 
+import { clockFromDay, freshnessSentence, nyToday, sessionsBehind, tradingDaysUntil } from "./sessionClock.js";
+
+export { nyDateString, nyToday, tradingDaysUntil } from "./sessionClock.js";
+
 export const POSITION_LIMIT = 0.25;
 export const THEME_LIMIT = 0.4;
 export const RSI_HOT = 80;
@@ -29,59 +33,15 @@ export const STATUS_LABEL = Object.freeze({
   info: "Don't add",
   green: "All clear",
   nodata: "No price",
+  stale: "Not current",
 });
 
-const STATUS_RANK = { red: 0, nodata: 1, amber: 2, info: 3, green: 4 };
-
-// NYSE full-day closures. Weekends are skipped separately.
-const US_MARKET_HOLIDAYS = new Set([
-  "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03", "2026-05-25",
-  "2026-06-19", "2026-07-03", "2026-09-07", "2026-11-26", "2026-12-25",
-  "2027-01-01", "2027-01-18", "2027-02-15", "2027-03-26", "2027-05-31",
-  "2027-06-18", "2027-07-05", "2027-09-06", "2027-11-25", "2027-12-24",
-  "2028-01-17", "2028-02-21", "2028-04-14", "2028-05-29", "2028-06-19",
-  "2028-07-04", "2028-09-04", "2028-11-23", "2028-12-25",
-]);
-
-export function nyDateString(date = new Date()) {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(date);
-}
-
-export function nyToday() {
-  return nyDateString(new Date());
-}
+const STATUS_RANK = { red: 0, stale: 1, nodata: 2, amber: 3, info: 4, green: 5 };
 
 function parseISODate(value) {
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value || ""));
   if (!match) return null;
   return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
-}
-
-function isoDate(date) {
-  return date.toISOString().slice(0, 10);
-}
-
-// Trading days from the day after `fromIso` through `toIso`, inclusive.
-// Returns null when the date is missing or already in the past.
-export function tradingDaysUntil(fromIso, toIso, holidays = US_MARKET_HOLIDAYS) {
-  const from = parseISODate(fromIso);
-  const to = parseISODate(toIso);
-  if (!from || !to || to < from) return null;
-  let days = 0;
-  const cursor = new Date(from.getTime());
-  while (cursor < to) {
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
-    const dow = cursor.getUTCDay();
-    if (dow === 0 || dow === 6) continue;
-    if (holidays.has(isoDate(cursor))) continue;
-    days += 1;
-  }
-  return days;
 }
 
 export function isEarningsSoon(dateIso, todayIso) {
@@ -199,11 +159,12 @@ function stopSentence({ price, stop, high22, atr22, costBasis, pnlDollars, pnlPc
   return `${where}${versusCost}`;
 }
 
-export function buildSellBook({ holdings, quotesBySymbol, earningsBySymbol, today }) {
+export function buildSellBook({ holdings, quotesBySymbol, earningsBySymbol, today, now }) {
   const list = Array.isArray(holdings) ? holdings : [];
   const quotes = quotesBySymbol || {};
   const earnings = earningsBySymbol || {};
   const todayIso = today || nyToday();
+  const clock = now instanceof Date ? now : clockFromDay(todayIso);
 
   const prepared = list.map((holding) => {
     const ticker = String(holding.ticker || "").toUpperCase();
@@ -231,6 +192,8 @@ export function buildSellBook({ holdings, quotesBySymbol, earningsBySymbol, toda
       stop: num(quote.chandelier_stop),
       streak: num(quote.below_sma50_streak) ?? 0,
       barDate: quote.bar_date ? String(quote.bar_date).slice(0, 10) : null,
+      fetchedAt: quote.updated_at || null,
+      priceCurrent: sessionsBehind(quote.bar_date, clock).state === "fresh",
       earningsDate,
       earningsDays,
       earningsSoon: isEarningsSoon(earningsDate, todayIso),
@@ -241,9 +204,10 @@ export function buildSellBook({ holdings, quotesBySymbol, earningsBySymbol, toda
   const themeBuckets = new Map();
   for (const row of prepared) {
     if (row.theme === "Unclassified" || row.marketValue == null) continue;
-    const bucket = themeBuckets.get(row.theme) || { name: row.theme, marketValue: 0, tickers: [] };
+    const bucket = themeBuckets.get(row.theme) || { name: row.theme, marketValue: 0, tickers: [], current: true };
     bucket.marketValue += row.marketValue;
     bucket.tickers.push(row.ticker);
+    if (!row.priceCurrent) bucket.current = false;
     themeBuckets.set(row.theme, bucket);
   }
 
@@ -257,7 +221,8 @@ export function buildSellBook({ holdings, quotesBySymbol, earningsBySymbol, toda
         marketValue: bucket.marketValue,
         weight,
         trimDollars,
-        over: trimDollars != null,
+        over: bucket.current && trimDollars != null,
+        unreliable: !bucket.current,
       };
     })
     .sort((a, b) => b.weight - a.weight || a.name.localeCompare(b.name));
@@ -272,6 +237,8 @@ export function buildSellBook({ holdings, quotesBySymbol, earningsBySymbol, toda
       ? (row.price - row.sma50) / row.sma50
       : null;
     const stopKnown = row.price != null && row.stop != null;
+    const freshness = sessionsBehind(row.barDate, clock);
+    const priceCurrent = freshness.state === "fresh";
 
     if (row.price == null) {
       flags.push({
@@ -281,7 +248,15 @@ export function buildSellBook({ holdings, quotesBySymbol, earningsBySymbol, toda
       });
     }
 
-    if (stopKnown && row.price < row.stop) {
+    if (!priceCurrent && row.price != null) {
+      flags.push({
+        code: "stale",
+        level: "stale",
+        why: freshnessSentence(freshness, "prices") || "The saved price is not from the latest completed session.",
+      });
+    }
+
+    if (priceCurrent && stopKnown && row.price < row.stop) {
       flags.push({
         code: "stop",
         level: "red",
@@ -298,7 +273,7 @@ export function buildSellBook({ holdings, quotesBySymbol, earningsBySymbol, toda
       });
     }
 
-    if (row.price != null && row.rsi != null && row.rsi > RSI_HOT) {
+    if (priceCurrent && row.price != null && row.rsi != null && row.rsi > RSI_HOT) {
       flags.push({
         code: "rsi",
         level: "amber",
@@ -306,7 +281,7 @@ export function buildSellBook({ holdings, quotesBySymbol, earningsBySymbol, toda
       });
     }
 
-    if (row.price != null && extensionPct != null && extensionPct >= SMA_STRETCH) {
+    if (priceCurrent && row.price != null && extensionPct != null && extensionPct >= SMA_STRETCH) {
       flags.push({
         code: "stretch",
         level: "amber",
@@ -325,7 +300,7 @@ export function buildSellBook({ holdings, quotesBySymbol, earningsBySymbol, toda
       });
     }
 
-    if (row.price != null && row.streak >= TREND_BREAK_DAYS) {
+    if (priceCurrent && row.price != null && row.streak >= TREND_BREAK_DAYS) {
       flags.push({
         code: "trend",
         level: "info",
@@ -333,7 +308,7 @@ export function buildSellBook({ holdings, quotesBySymbol, earningsBySymbol, toda
       });
     }
 
-    const positionTrim = row.marketValue != null
+    const positionTrim = priceCurrent && row.marketValue != null
       ? trimToLimit(row.marketValue, totalMarketValue, POSITION_LIMIT)
       : null;
     if (positionTrim != null) {
@@ -345,7 +320,7 @@ export function buildSellBook({ holdings, quotesBySymbol, earningsBySymbol, toda
     }
 
     const themeInfo = themeByName.get(row.theme);
-    if (themeInfo?.over && row.marketValue != null) {
+    if (priceCurrent && themeInfo?.over && row.marketValue != null) {
       flags.push({
         code: "theme",
         level: "amber",
@@ -368,7 +343,7 @@ export function buildSellBook({ holdings, quotesBySymbol, earningsBySymbol, toda
       if (flag.code === "nodata") continue;
       why.push(flag.why);
     }
-    if (stopKnown && !flags.some((flag) => flag.code === "stop")) {
+    if (priceCurrent && stopKnown && !flags.some((flag) => flag.code === "stop")) {
       why.push(stopSentence({
         price: row.price,
         stop: row.stop,
@@ -380,10 +355,10 @@ export function buildSellBook({ holdings, quotesBySymbol, earningsBySymbol, toda
         breached: false,
       }));
     }
-    if (row.price != null && row.stop == null) {
+    if (priceCurrent && row.price != null && row.stop == null) {
       why.push("The trailing stop is not calculated yet. It appears after the next nightly price refresh.");
     }
-    if (row.price != null && flags.filter((flag) => flag.code !== "nodata").length === 0 && row.stop != null) {
+    if (priceCurrent && row.price != null && flags.filter((flag) => flag.code !== "nodata").length === 0 && row.stop != null) {
       why.unshift("All clear. None of the sell checks are firing.");
     }
     if (flags.some((flag) => flag.code === "nodata")) {
@@ -399,6 +374,7 @@ export function buildSellBook({ holdings, quotesBySymbol, earningsBySymbol, toda
       extensionPct,
       positionTrim,
       flags: flags.filter((flag) => flag.code !== "nodata"),
+      freshness,
       status,
       statusLabel: STATUS_LABEL[status],
       why,
@@ -407,7 +383,7 @@ export function buildSellBook({ holdings, quotesBySymbol, earningsBySymbol, toda
 
   rows.sort((a, b) => STATUS_RANK[a.status] - STATUS_RANK[b.status] || a.ticker.localeCompare(b.ticker));
 
-  const counts = { red: 0, amber: 0, info: 0, green: 0, nodata: 0 };
+  const counts = { red: 0, amber: 0, info: 0, green: 0, nodata: 0, stale: 0 };
   for (const row of rows) counts[row.status] += 1;
 
   const barDates = [...new Set(rows.map((row) => row.barDate).filter(Boolean))];

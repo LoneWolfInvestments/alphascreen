@@ -3,6 +3,7 @@ import { useWatchlistQuotes } from "../hooks/useWatchlistQuotes";
 import { earningsDateFor, useEarningsMap } from "../hooks/useEarningsMap";
 import { previewSample } from "../lib/previewSample";
 import { formatDay, isEarningsSoon, nyToday } from "../lib/sellSignals";
+import { TIMING_NOTE, sessionsBehind } from "../lib/sessionClock";
 import { buildSwingSample } from "../lib/swingSample";
 import {
   BENCHMARK_SYMBOL,
@@ -63,7 +64,7 @@ function SortHeader({ label, sortKey, sort, onSort }) {
   );
 }
 
-export function TechnicalAnalysisView({ rows, sample, barDate, spyClose, earningsBySymbol, today }) {
+export function TechnicalAnalysisView({ rows, sample, barDate, barDatesMixed, downloadedAt, spyClose, earningsBySymbol, today, now = new Date() }) {
   const [sort, setSort] = useState({ key: "rsRank", dir: "asc" });
   const onSort = (key) => {
     setSort((current) => {
@@ -82,6 +83,7 @@ export function TechnicalAnalysisView({ rows, sample, barDate, spyClose, earning
     return acc;
   }, {});
   const waiting = visible.length > 0 && visible.every((row) => !row.label);
+  const notCurrent = visible.filter((row) => row.label && sessionsBehind(row.barDate, now).state !== "fresh").length;
 
   return (
     <div className="panel">
@@ -98,9 +100,17 @@ export function TechnicalAnalysisView({ rows, sample, barDate, spyClose, earning
         20-day and 50-day average, within the last 5 sessions. Pullback means price tagged the rising 20-day or 50-day
         and held it. RSI does not add a buy. The stop is 2×ATR(14) under the close. At a 1% portfolio risk, position
         size is about 1% divided by the distance to that stop. Anything over 25% of the account is above your single-name cap.
-        {barDate ? ` Prices as of ${formatDay(barDate)}.` : ""}
+        {barDate ? ` Newest price session ${formatDay(barDate)}.` : ""}
+        {barDatesMixed ? " Price sessions differ by symbol, so each setup is only as current as its own session." : ""}
+        {downloadedAt ? ` Last download ${new Date(downloadedAt).toLocaleString()}, which is not a new session.` : ""}
         {spyClose != null ? ` SPY ${usd(spyClose)} is the benchmark and is not listed as a trade.` : " SPY is the benchmark."}
       </p>
+
+      {notCurrent > 0 && (
+        <div className="sample-banner">
+          {notCurrent} saved setup{notCurrent === 1 ? "" : "s"} {notCurrent === 1 ? "is" : "are"} behind the latest completed session. Those badges say “not current” and are not entries or exits today.
+        </div>
+      )}
 
       {waiting && (
         <div className="sample-banner">
@@ -135,12 +145,14 @@ export function TechnicalAnalysisView({ rows, sample, barDate, spyClose, earning
                 const earningsDate = earningsDateFor(earningsBySymbol, row.symbol, null);
                 const soon = isEarningsSoon(earningsDate, today);
                 const showStop = ENTRY_LABELS.has(row.label);
+                const fresh = sessionsBehind(row.barDate, now).state === "fresh";
+                const badgeText = !row.label ? null : fresh ? row.label : `${row.label} (not current)`;
                 return (
                   <React.Fragment key={row.symbol}>
                     <tr className={soon ? "earn-soon-row" : undefined}>
                       <td>{row.rsRank == null ? "—" : `${row.rsRank} of ${row.rsCount}`}</td>
                       <td><strong className={soon ? "earn-soon" : undefined}>{row.symbol}</strong></td>
-                      <td>{row.label ? <span className={`badge ${setupClass(row.label)}`}>{row.label}</span> : "—"}</td>
+                      <td>{badgeText ? <span className={`badge ${fresh ? setupClass(row.label) : "setup-thin"}`}>{badgeText}</span> : "—"}</td>
                       <td>{usd(row.price)}</td>
                       <td>{showStop ? usd(row.stop) : "—"}</td>
                       <td>{showStop ? formatRiskPct(row.riskPct) : "—"}</td>
@@ -176,12 +188,12 @@ export function TechnicalAnalysisView({ rows, sample, barDate, spyClose, earning
       )}
 
       <p className="disclaimer">
+        {TIMING_NOTE} The setup’s suggested stop is 2×ATR(14) under the close, for sizing an entry. The Sell tab uses a different trailing stop, the 22-day high minus 3×ATR(22). They are not averaged.
         The first nightly run stores about 320 trading days (roughly 15 months) for each symbol, plus SPY, using the same
         kind of download as before. Breakouts, pullbacks, stops, and the 3- and 6-month comparison are ready the next
         morning. The 12-month comparison is ready the same morning for any name with at least 252 stored sessions. A
         stock with a shorter history shows a blank there until enough days have been saved, one new session per night
-        after that first download. The Sell Signals tab still uses its own exit stop, the 22-day high minus 3×ATR(22),
-        now calculated from these saved bars.
+        after that first download.
       </p>
     </div>
   );
@@ -203,6 +215,7 @@ export default function TechnicalAnalysis() {
         spyClose={SAMPLE.spyClose}
         earningsBySymbol={bySymbol}
         today={today}
+        now={new Date("2026-10-30T17:00:00Z")}
       />
     );
   }
@@ -213,7 +226,7 @@ export default function TechnicalAnalysis() {
   return (
     <div>
       <div className="sync-note" style={{ marginBottom: 8 }}>
-        {live.lastUpdated ? `Last refresh ${new Date(live.lastUpdated).toLocaleString()}` : "No refresh yet"}
+        {live.lastUpdated ? `Downloaded ${new Date(live.lastUpdated).toLocaleString()}` : "No download yet"}
         {" · "}
         <button className="link-btn" onClick={live.refetch}>refresh</button>
       </div>
@@ -224,9 +237,12 @@ export default function TechnicalAnalysis() {
           rows={rows}
           sample={false}
           barDate={dates.length === 1 ? dates[0] : null}
+          barDatesMixed={dates.length > 1}
+          downloadedAt={live.lastUpdated}
           spyClose={null}
           earningsBySymbol={bySymbol}
           today={today}
+          now={new Date()}
         />
       )}
     </div>

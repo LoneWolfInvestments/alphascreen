@@ -1,35 +1,13 @@
-// src/components/Overview.jsx
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 import { useOwnerSession } from "../hooks/useOwnerSession";
 import { earningsDateFor, useEarningsMap } from "../hooks/useEarningsMap";
 import { formatDay, isEarningsSoon, nyToday, tradingDaysUntil } from "../lib/sellSignals";
 import { technicalReadFromQuote } from "../lib/swingSetups";
+import { readBusinessFundamentals, readOwnership } from "../lib/businessFundamentals";
+import { TIMING_NOTE, agreementLabel } from "../lib/signalBoard";
 import EarningsDate from "./EarningsDate";
 import { MarketStressBanner } from "./MarketStress";
-
-// ---- Fundamental side: institutional breadth + analyst rating combined ----
-function fundamentalRead(f) {
-  if (!f) return { score: null, sig: null };
-  const hasBreadth = f.inst_net_breadth != null;
-  const hasAnalyst = !!f.analyst_rating;
-  if (!hasBreadth && !hasAnalyst) return { score: null, sig: null };
-
-  const breadthPoints = hasBreadth ? f.inst_net_breadth / 50 : 0; // roughly -1..1
-  const analystPoints = f.analyst_rating === "Buy" ? 1 : f.analyst_rating === "Sell" ? -1 : 0;
-  const inputs = (hasBreadth ? 1 : 0) + (hasAnalyst ? 1 : 0);
-  const combined = (breadthPoints + analystPoints) / inputs;
-
-  const score = hasBreadth ? Math.round(50 + f.inst_net_breadth) : null; // kept for display only
-  let sig = "Hold";
-  if (combined > 0.3) sig = "Buy";
-  else if (combined < -0.3) sig = "Sell";
-  return { score, sig };
-}
-
-function technicalRead(q) {
-  return technicalReadFromQuote(q);
-}
 
 function earningsCaveat(dateStr, today) {
   if (!dateStr) return null;
@@ -40,19 +18,22 @@ function earningsCaveat(dateStr, today) {
   return `Earnings ${pretty} (${when}) — skip new buys`;
 }
 
-function confluenceRead(fSig, tSig) {
-  if (fSig == null && tSig == null) return { label: "No data", color: "#8b93a7" };
-  if (fSig == null || tSig == null) return { label: "Partial data", color: "#8b93a7" };
-  if (fSig === "Buy" && tSig === "Buy") return { label: "Strong Buy confluence", color: "#3ecf8e" };
-  if (fSig === "Sell" && tSig === "Sell") return { label: "Strong Sell confluence", color: "#f0555a" };
-  if ((fSig === "Buy" && tSig === "Sell") || (fSig === "Sell" && tSig === "Buy")) return { label: "Conflicting signals", color: "#f0b955" };
-  return { label: "Neutral / mixed", color: "#8b93a7" };
-}
+const PRIORITY = {
+  "Business and setup both up": 0,
+  "Both look weak": 1,
+  "Business and price disagree": 2,
+  Mixed: 3,
+  "Price not current": 4,
+  "Fundamentals not current": 4,
+  Partial: 5,
+  "No current read": 6,
+};
 
 export default function Overview() {
   const { ready, session } = useOwnerSession();
   const { bySymbol } = useEarningsMap();
   const today = nyToday();
+  const now = new Date();
   const [fundamental, setFundamental] = useState([]);
   const [quotes, setQuotes] = useState([]);
   const [portfolio, setPortfolio] = useState([]);
@@ -77,82 +58,91 @@ export default function Overview() {
     return () => { supabase.removeChannel(c1); supabase.removeChannel(c2); supabase.removeChannel(c3); };
   }, [loadAll, ready, session?.user?.id]);
 
-  // Union of every ticker mentioned anywhere — portfolio just contributes tickers
-  // to make sure held positions show up here, even though its weight/conviction
-  // fields are no longer displayed on this tab.
   const tickers = Array.from(new Set([
-    ...fundamental.map((r) => r.ticker),
-    ...quotes.map((r) => r.symbol),
-    ...portfolio.map((r) => r.ticker),
+    ...fundamental.map((row) => row.ticker),
+    ...quotes.map((row) => row.symbol),
+    ...portfolio.map((row) => row.ticker),
   ])).sort();
 
   const rows = tickers.map((ticker) => {
-    const f = fundamental.find((r) => r.ticker === ticker);
-    const q = quotes.find((r) => r.symbol === ticker);
-
-    const { score: fScore, sig: fSig } = fundamentalRead(f);
-    const { sig: tSig, label: tLabel, caveats: tCaveats } = technicalRead(q);
-    const confluence = confluenceRead(fSig, tSig);
-
-    const caveats = [...tCaveats];
+    const f = fundamental.find((row) => row.ticker === ticker);
+    const q = quotes.find((row) => row.symbol === ticker);
+    const business = readBusinessFundamentals(f, { now });
+    const technical = technicalReadFromQuote(q, { now });
+    const ownership = readOwnership(f);
+    const agreement = agreementLabel({ business, technical });
     const earnDate = earningsDateFor(bySymbol, ticker, f?.next_earnings_date);
-    const earnCaveat = earningsCaveat(earnDate, today);
-    if (earnCaveat) caveats.push(earnCaveat);
-
-    return { ticker, fScore, fSig, tSig, tLabel, price: q?.price, rsi: q?.rsi, macd: q?.macd, confluence, caveats, earnDate, soon: isEarningsSoon(earnDate, today) };
+    const notes = [business.summary, technical.reasons[0], ownership.text, earningsCaveat(earnDate, today)].filter(Boolean);
+    return {
+      ticker,
+      business,
+      technical,
+      agreement,
+      price: q?.price,
+      rsi: q?.rsi,
+      macd: q?.macd,
+      earnDate,
+      soon: isEarningsSoon(earnDate, today),
+      notes,
+    };
   });
 
-  const priority = { "Strong Buy confluence": 0, "Strong Sell confluence": 1, "Conflicting signals": 2, "Neutral / mixed": 3, "Partial data": 4, "No data": 5 };
-  rows.sort((a, b) => priority[a.confluence.label] - priority[b.confluence.label]);
+  rows.sort((a, b) => (PRIORITY[a.agreement.label] ?? 9) - (PRIORITY[b.agreement.label] ?? 9));
 
   return (
     <>
-    <MarketStressBanner />
-    <div className="panel">
-      <h2>Overview — Signal Confluence</h2>
-      <p className="disclaimer" style={{ marginTop: 0, marginBottom: 12, borderTop: "none", paddingTop: 0 }}>
-        Fundamental combines institutional 13F breadth and analyst consensus. Technical is the swing setup from the
-        Technical Analysis tab: Breakout or Pullback counts as bullish, a downtrend counts as bearish, and an uptrend
-        with nothing to enter counts as a hold. RSI is only a warning. P/E, market cap, EPS, and margin stay on the
-        Fundamental Screener, where they have the context they need.
-        {ready && !session ? " Sign in to include tickers that are only in your portfolio." : ""}
-      </p>
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Ticker</th><th>Next earnings</th><th>Fundamental</th><th>Setup</th><th>Confluence</th>
-              <th>Price</th><th>RSI</th><th>MACD</th><th>Why</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.ticker} className={r.soon ? "earn-soon-row" : undefined}>
-                <td><strong className={r.soon ? "earn-soon" : undefined}>{r.ticker}</strong></td>
-                <td><EarningsDate date={r.earnDate} today={today} /></td>
-                <td>{r.fSig ? `${r.fSig}${r.fScore != null ? ` (${r.fScore})` : ""}` : "—"}</td>
-                <td>{r.tLabel || "—"}</td>
-                <td>
-                  <span className="badge" style={{ background: r.confluence.color + "26", color: r.confluence.color }}>
-                    {r.confluence.label}
-                  </span>
-                </td>
-                <td>{r.price != null ? Number(r.price).toFixed(2) : "—"}</td>
-                <td>{r.rsi != null ? Number(r.rsi).toFixed(1) : "—"}</td>
-                <td>{r.macd != null ? Number(r.macd).toFixed(2) : "—"}</td>
-                <td className="wrap">{r.caveats.join(" ") || "—"}</td>
+      <MarketStressBanner />
+      <div className="panel">
+        <h2>Overview</h2>
+        <p className="disclaimer" style={{ marginTop: 0, marginBottom: 12, borderTop: "none", paddingTop: 0 }}>
+          Business is revenue, earnings, margins, and a rough P/E check. The setup is the daily price pattern. “Together” only describes whether those two agree. It is not a blended score. RSI and MACD are shown as lagging oscillators and are not a third signal. 13F ownership is quoted in the note and is not scored.
+          {" "}{TIMING_NOTE}
+          {ready && !session ? " Sign in to include tickers that are only in your portfolio." : ""}
+        </p>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Ticker</th>
+                <th>Next earnings</th>
+                <th>Business</th>
+                <th>Setup</th>
+                <th>Price session</th>
+                <th>Together</th>
+                <th>Price</th>
+                <th>RSI 14, lagging</th>
+                <th>MACD, lagging</th>
+                <th>Notes</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-        {rows.length === 0 && (
-          <div className="empty">
-            No names yet — add tickers to the Fundamental Screener and/or the watchlist (for live Technical data)
-            to see them combined here.
-          </div>
-        )}
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.ticker} className={row.soon ? "earn-soon-row" : undefined}>
+                  <td><strong className={row.soon ? "earn-soon" : undefined}>{row.ticker}</strong></td>
+                  <td><EarningsDate date={row.earnDate} today={today} /></td>
+                  <td>{row.business.signal ? `${row.business.signal}${row.business.score != null ? ` (${row.business.score})` : ""}` : "—"}</td>
+                  <td>{row.technical.displayLabel || "—"}</td>
+                  <td>{row.technical.barDate || "—"}{row.technical.fetchedAt ? <div className="sync-note">Saved {new Date(row.technical.fetchedAt).toLocaleString()}</div> : null}</td>
+                  <td>
+                    <span className="badge" style={{ background: `${row.agreement.tone}26`, color: row.agreement.tone }}>
+                      {row.agreement.label}
+                    </span>
+                  </td>
+                  <td>{row.price != null ? Number(row.price).toFixed(2) : "—"}</td>
+                  <td>{row.rsi != null ? Number(row.rsi).toFixed(1) : "—"}</td>
+                  <td>{row.macd != null ? Number(row.macd).toFixed(2) : "—"}</td>
+                  <td className="wrap">{row.notes.join(" ") || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {rows.length === 0 && (
+            <div className="empty">
+              No names yet — add tickers to the Fundamental Screener and/or the watchlist to see them side by side.
+            </div>
+          )}
+        </div>
       </div>
-    </div>
     </>
   );
 }

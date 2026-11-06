@@ -38,6 +38,11 @@ button.action.danger { background: var(--red); padding: 4px 8px; font-size: 11px
 .add-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; margin-bottom: 12px; }
 .add-form label { display: block; font-size: 11px; color: var(--text-dim); margin-bottom: 3px; }
 .field { min-width: 90px; }
+.size-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 16px; margin-bottom: 12px; }
+.size-form .field { min-width: 0; }
+.size-form input { width: 100%; }
+.field-error { color: var(--red); font-size: 12px; margin: 4px 0 0; }
+@media (max-width: 800px) { .size-form { grid-template-columns: 1fr; } }
 .empty { color: var(--text-dim); font-style: italic; padding: 20px; text-align: center; }
 .sync-note { font-size: 11px; color: var(--text-dim); }
 .disclaimer { font-size: 11px; color: var(--text-dim); border-top: 1px solid var(--border); padding-top: 10px; margin-top: 10px; }
@@ -75,6 +80,7 @@ input.theme-input { width: 140px; background: var(--bg); }
 .earn-badge { background: #f0b95526; color: var(--amber); margin-left: 6px; }
 tr.earn-soon-row { box-shadow: inset 3px 0 0 var(--amber); }
 td.wrap { white-space: normal; min-width: 220px; font-size: 12px; color: var(--text-dim); line-height: 1.45; }
+.wrap-note { white-space: normal; max-width: 280px; line-height: 1.4; margin-top: 4px; }
 th .sort-btn { background: none; border: none; color: inherit; font: inherit; cursor: pointer; padding: 0; }
 th .sort-btn.active { color: var(--accent); }
 tr.reason-row td { white-space: normal; color: var(--text-dim); font-size: 12px; line-height: 1.45; padding-top: 0; max-width: 720px; }

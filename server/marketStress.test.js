@@ -102,7 +102,7 @@ test("breadth ignores short histories and prices more than five days old", () =>
   assert.equal(result.pct, 50);
 });
 
-test("a stress row uses fresh SPY bars and says so when they are a day behind", () => {
+test("a stress row does not borrow SPY from a different session", () => {
   const spy = Array.from({ length: 230 }, (_, i) => ({ date: iso(i), close: 100 + i }));
   const names = [spy.map((bar) => ({ ...bar }))];
   const asOf = shift(spy.at(-1).date, 1);
@@ -114,10 +114,11 @@ test("a stress row uses fresh SPY bars and says so when they are a day behind", 
     spySeries: spy,
     nameSeries: names,
   });
-  assert.equal(row.regime, "green");
-  assert.equal(row.spy_above_sma200, true);
-  assert.match(row.reason, /SPY's saved prices are as of/);
-  assert.equal(row.breadth_total, 1);
+  assert.notEqual(row.regime, "green");
+  assert.equal(row.spy_above_sma200, null);
+  assert.equal(row.spy_bar_date, null);
+  assert.match(row.reason, /different session/);
+  assert.equal(row.breadth_total, 0);
 });
 
 test("the preview history mixes lights and ends on the October 29 amber reading", () => {

@@ -79,6 +79,30 @@ test("gain or loss at the stop is measured against cost, not the latest price", 
   assert.equal(pnlAtStop(176, 0, 100).dollars, null);
 });
 
+test("a price from an older session does not light an exit, even if the row was saved today", () => {
+  const book = buildSellBook({
+    holdings: [{ ticker: "TEST", shares: 10, cost_basis: 50, theme: "Solo" }],
+    quotesBySymbol: {
+      TEST: {
+        price: 10,
+        rsi: 90,
+        sma_50: 5,
+        chandelier_stop: 12,
+        bar_date: "2026-10-29",
+        updated_at: "2026-11-06T15:00:00Z",
+      },
+    },
+    earningsBySymbol: {},
+    today: "2026-11-06",
+    now: new Date("2026-11-06T15:00:00Z"),
+  });
+  assert.equal(book.rows[0].status, "stale");
+  assert.equal(book.rows[0].statusLabel, "Not current");
+  assert.equal(book.rows[0].flags.some((flag) => flag.code === "stop"), false);
+  assert.equal(book.rows[0].flags.some((flag) => flag.code === "rsi"), false);
+  assert.match(book.rows[0].why.join(" "), /not a buy or sell today/);
+});
+
 test("the sample book lights up exit, trim, earnings, trend, and concentration", () => {
   const book = sampleSellBook();
   const byTicker = Object.fromEntries(book.rows.map((row) => [row.ticker, row]));

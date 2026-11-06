@@ -7,6 +7,7 @@
 
 import { ATR, RSI, SMA } from "technicalindicators";
 import { POSITION_LIMIT } from "./sellSignals.js";
+import { freshnessSentence, sessionsBehind } from "./sessionClock.js";
 
 export const BENCHMARK_SYMBOL = "SPY";
 
@@ -557,22 +558,47 @@ export function assignRelativeStrengthRanks(rows) {
   });
 }
 
-export function technicalReadFromQuote(quote) {
-  if (!quote) return { sig: null, label: null, reasons: [], caveats: [], riskPct: null };
+export function technicalReadFromQuote(quote, { now = new Date() } = {}) {
+  if (!quote) {
+    return {
+      sig: null, label: null, displayLabel: null, reasons: [], caveats: [], riskPct: null,
+      freshness: { state: "missing" }, barDate: null, fetchedAt: null, stop: null, actionable: false,
+    };
+  }
   const label = quote.setup_label || null;
+  const barDate = quote.bar_date ? String(quote.bar_date).slice(0, 10) : null;
+  const freshness = sessionsBehind(barDate, now);
+  const fresh = freshness.state === "fresh";
   let sig = null;
-  if (label === SETUP.BREAKOUT || label === SETUP.PULLBACK) sig = "Buy";
-  else if (label === SETUP.UPTREND) sig = "Hold";
-  else if (label === SETUP.AVOID) sig = "Sell";
+  if (fresh && (label === SETUP.BREAKOUT || label === SETUP.PULLBACK)) sig = "Buy";
+  else if (fresh && label === SETUP.UPTREND) sig = "Hold";
+  else if (fresh && label === SETUP.AVOID) sig = "Sell";
 
   const reasons = [];
+  const staleNote = fresh ? null : freshnessSentence(freshness, "prices");
+  if (staleNote) reasons.push(staleNote);
+  else if (barDate) reasons.push(`Price session ${barDate}. Figures are the daily close. RSI and moving averages lag that close.`);
   if (quote.setup_reason) reasons.push(quote.setup_reason);
   else if (!label && quote.symbol) reasons.push("Setup not saved yet. It fills in after the next nightly refresh.");
 
   const caveats = [];
+  if (staleNote) caveats.push(staleNote);
   if (quote.setup_reason) caveats.push(quote.setup_reason);
   else if (!label) caveats.push("Setup not saved yet");
 
   const riskPct = num(quote.risk_pct);
-  return { sig, label, reasons, caveats, riskPct };
+  const displayLabel = !label ? null : fresh ? label : `${label} (not current)`;
+  return {
+    sig,
+    label,
+    displayLabel,
+    reasons,
+    caveats,
+    riskPct,
+    freshness,
+    barDate,
+    fetchedAt: quote.updated_at || null,
+    stop: num(quote.suggested_stop),
+    actionable: fresh && sig != null,
+  };
 }

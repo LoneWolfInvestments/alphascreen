@@ -1,3 +1,5 @@
+import { freshnessSentence, sessionsBehind } from "./sessionClock.js";
+
 // Market-regime rules for the nightly job and the Market Stress tab.
 // Thresholds are the common swing-trading lines, not a fitted model:
 //   * Green needs all of: SPY above its 200-day average, that average higher
@@ -181,7 +183,7 @@ export function breadthFromSeries(seriesList, asOf) {
   for (const series of seriesList || []) {
     if (!series?.length) continue;
     const last = series[series.length - 1];
-    if (asOf && !dateWithin(last.date, asOf)) continue;
+    if (asOf && last.date !== asOf) continue;
     const trend = trendFromCloses(series.map((bar) => bar.close));
     if (trend.above == null) continue;
     total += 1;
@@ -294,10 +296,10 @@ export function classifyRegime({
 }
 
 export function buildStressRow({ asOf, vix, vix3m, skew, spySeries, nameSeries }) {
-  const spy = spySeries || [];
+  const spy = (spySeries || []).filter((bar) => !asOf || bar.date <= asOf);
   const spyLast = spy.length ? spy[spy.length - 1] : null;
-  const fresh = Boolean(spyLast && dateWithin(spyLast.date, asOf));
-  const trend = fresh
+  const sameSession = Boolean(spyLast && spyLast.date === asOf);
+  const trend = sameSession
     ? trendFromCloses(spy.map((bar) => bar.close))
     : { close: null, sma200: null, above: null, rising: null };
   const breadth = breadthFromSeries(nameSeries, asOf);
@@ -312,10 +314,8 @@ export function buildStressRow({ asOf, vix, vix3m, skew, spySeries, nameSeries }
   });
 
   let reason = classified.reason;
-  if (spyLast && !fresh) {
-    reason += ` SPY's saved prices stop at ${spyLast.date}, which is too old to use for this reading.`;
-  } else if (fresh && spyLast.date !== asOf) {
-    reason += ` SPY's saved prices are as of ${spyLast.date}.`;
+  if (spyLast && !sameSession) {
+    reason += ` SPY's saved prices stop at ${spyLast.date}, a different session from ${asOf}, so they were not used.`;
   }
 
   return {
@@ -328,12 +328,40 @@ export function buildStressRow({ asOf, vix, vix3m, skew, spySeries, nameSeries }
     spy_sma200: roundTo(trend.sma200, 4),
     spy_above_sma200: trend.above,
     spy_sma200_rising: trend.rising,
-    spy_bar_date: fresh ? spyLast.date : null,
+    spy_bar_date: sameSession ? spyLast.date : null,
     breadth_above: breadth.above,
     breadth_total: breadth.total,
     breadth_pct: breadth.pct,
     regime: classified.regime,
     reason,
+  };
+}
+
+// The stored row keeps its historical light. This decides whether that light
+// may be shown as today's backdrop. A later `updated_at` does not move `as_of`.
+export function presentRegime(row, now = new Date()) {
+  if (!row || !row.as_of) {
+    return { state: "missing", regime: null, savedRegime: null, headline: "No market reading yet.", asOf: null, fetchedAt: null, spyBarDate: null };
+  }
+  const asOf = String(row.as_of).slice(0, 10);
+  const info = sessionsBehind(asOf, now);
+  const spyBarDate = row.spy_bar_date ? String(row.spy_bar_date).slice(0, 10) : null;
+  const mixed = Boolean(spyBarDate && spyBarDate !== asOf);
+  const fetchedAt = row.updated_at || null;
+  if (info.state !== "fresh" || mixed) {
+    const headline = mixed && info.state === "fresh"
+      ? `This reading mixes ${asOf} with SPY prices from ${spyBarDate}, so it is not shown as the current light.`
+      : freshnessSentence(info, "market reading");
+    return { state: mixed && info.state === "fresh" ? "mixed" : info.state, regime: null, savedRegime: row.regime || null, headline, asOf, fetchedAt, spyBarDate };
+  }
+  return {
+    state: "fresh",
+    regime: row.regime || null,
+    savedRegime: row.regime || null,
+    headline: row.reason || "",
+    asOf,
+    fetchedAt,
+    spyBarDate,
   };
 }
 

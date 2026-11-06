@@ -5,7 +5,9 @@ import Opportunities from "./components/Opportunities";
 import Overview from "./components/Overview";
 import FundamentalScreener from "./components/FundamentalScreener";
 import TechnicalAnalysis from "./components/TechnicalAnalysis";
+import SetupStudy from "./components/SetupStudy";
 import PortfolioAllocation from "./components/PortfolioAllocation";
+import PositionSize from "./components/PositionSize";
 import MarketStress from "./components/MarketStress";
 import Mag7 from "./components/Mag7";
 import SellSignals from "./components/SellSignals";
@@ -18,8 +20,10 @@ const TABS = [
   { key: "overview", label: "Overview (raw)", Component: Overview },
   { key: "fundamental", label: "Fundamental Screener", Component: FundamentalScreener },
   { key: "technical", label: "Technical Analysis", Component: TechnicalAnalysis },
+  { key: "study", label: "Setup Study", Component: SetupStudy },
   { key: "mag7", label: "MAG7", Component: Mag7 },
   { key: "portfolio", label: "Portfolio Allocation", Component: PortfolioAllocation },
+  { key: "size", label: "Position Size", Component: PositionSize },
   { key: "sell", label: "Sell Signals", Component: SellSignals },
   { key: "reallocation", label: "Reallocation Log", Component: ReallocationLog },
 ];
