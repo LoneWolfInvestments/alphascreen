@@ -1,7 +1,12 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { supabase } from "../lib/supabaseClient";
 import { useWatchlistQuotes } from "../hooks/useWatchlistQuotes";
+import { useOwnerSession } from "../hooks/useOwnerSession";
 import { earningsDateFor, useEarningsMap } from "../hooks/useEarningsMap";
 import { previewSample } from "../lib/previewSample";
+import { buildDecisionRows } from "../lib/decisionBook";
+import { sampleHoldings, sampleQuotesBySymbol, sampleScreenerRows } from "../lib/sellSignalsSample";
+import { sampleMarketStressRows } from "../lib/marketStressSample";
 import { formatDay, isEarningsSoon, nyToday } from "../lib/sellSignals";
 import { TIMING_NOTE, sessionsBehind } from "../lib/sessionClock";
 import { buildSwingSample } from "../lib/swingSample";
@@ -64,7 +69,7 @@ function SortHeader({ label, sortKey, sort, onSort }) {
   );
 }
 
-export function TechnicalAnalysisView({ rows, sample, barDate, barDatesMixed, downloadedAt, spyClose, earningsBySymbol, today, now = new Date() }) {
+export function TechnicalAnalysisView({ rows, decisions = new Map(), sample, barDate, barDatesMixed, downloadedAt, spyClose, earningsBySymbol, today, now = new Date() }) {
   const [sort, setSort] = useState({ key: "rsRank", dir: "asc" });
   const onSort = (key) => {
     setSort((current) => {
@@ -98,7 +103,7 @@ export function TechnicalAnalysisView({ rows, sample, barDate, barDatesMixed, do
         A long is only considered when price is above a rising 50-day average and that 50-day is above the 200-day.
         Breakout means the close cleared the highest high of the 20 days before that day, on volume above both the
         20-day and 50-day average, within the last 5 sessions. Pullback means price tagged the rising 20-day or 50-day
-        and held it. RSI does not add a buy. The stop is 2×ATR(14) under the close. At a 1% portfolio risk, position
+        and held it. The decision column is the same one as Signals. Breakout and Pullback are the price pattern, not a separate buy. RSI does not add a buy. The stop is 2×ATR(14) under the close. At a 1% portfolio risk, position
         size is about 1% divided by the distance to that stop. Anything over 25% of the account is above your single-name cap.
         {barDate ? ` Newest price session ${formatDay(barDate)}.` : ""}
         {barDatesMixed ? " Price sessions differ by symbol, so each setup is only as current as its own session." : ""}
@@ -132,7 +137,8 @@ export function TechnicalAnalysisView({ rows, sample, barDate, barDatesMixed, do
               <tr>
                 <SortHeader label="RS rank" sortKey="rsRank" sort={sort} onSort={onSort} />
                 <SortHeader label="Ticker" sortKey="symbol" sort={sort} onSort={onSort} />
-                <SortHeader label="Setup" sortKey="label" sort={sort} onSort={onSort} />
+                <th>Decision</th>
+                <SortHeader label="Setup evidence" sortKey="label" sort={sort} onSort={onSort} />
                 <SortHeader label="Price" sortKey="price" sort={sort} onSort={onSort} />
                 <th>Stop</th>
                 <SortHeader label="Risk" sortKey="riskPct" sort={sort} onSort={onSort} />
@@ -152,6 +158,7 @@ export function TechnicalAnalysisView({ rows, sample, barDate, barDatesMixed, do
                     <tr className={soon ? "earn-soon-row" : undefined}>
                       <td>{row.rsRank == null ? "—" : `${row.rsRank} of ${row.rsCount}`}</td>
                       <td><strong className={soon ? "earn-soon" : undefined}>{row.symbol}</strong></td>
+                      <td>{decisions.get(row.symbol)?.assessment || "—"}</td>
                       <td>{badgeText ? <span className={`badge ${fresh ? setupClass(row.label) : "setup-thin"}`}>{badgeText}</span> : "—"}</td>
                       <td>{usd(row.price)}</td>
                       <td>{showStop ? usd(row.stop) : "—"}</td>
@@ -166,7 +173,7 @@ export function TechnicalAnalysisView({ rows, sample, barDate, barDatesMixed, do
                       </td>
                     </tr>
                     <tr className="reason-row">
-                      <td colSpan={8}>
+                      <td colSpan={9}>
                         {row.reason || "—"}
                         {earningsDate && (
                           <div className="reason-earn">
@@ -202,20 +209,71 @@ export function TechnicalAnalysisView({ rows, sample, barDate, barDatesMixed, do
 export default function TechnicalAnalysis() {
   const sample = previewSample();
   const live = useWatchlistQuotes();
+  const { ready, session } = useOwnerSession();
   const { bySymbol } = useEarningsMap();
-  const today = nyToday();
+  const today = sample ? "2026-10-30" : nyToday();
+  const [extra, setExtra] = useState({ fundamentals: [], stress: null, holdings: [], holdingsKnown: false });
+
+  useEffect(() => {
+    if (sample || !ready) return undefined;
+    const userId = session?.user?.id || null;
+    let cancelled = false;
+    setExtra({ fundamentals: [], stress: null, holdings: [], holdingsKnown: false });
+    Promise.all([
+      supabase.from("fundamental_scores").select("*"),
+      supabase.from("market_stress").select("*").order("as_of", { ascending: false }).limit(1),
+      userId ? supabase.from("portfolio").select("ticker, shares, cost_basis, theme") : Promise.resolve({ data: [], error: null }),
+    ]).then(([fundamentals, stress, portfolio]) => {
+      if (cancelled) return;
+      setExtra({
+        fundamentals: fundamentals.data || [],
+        stress: stress.error ? null : (stress.data || [])[0] || null,
+        holdings: portfolio.error ? [] : (portfolio.data || []),
+        holdingsKnown: Boolean(userId) && !portfolio.error,
+      });
+    });
+    return () => { cancelled = true; };
+  }, [ready, sample, session?.user?.id]);
+
+  const sampleNow = new Date("2026-10-30T17:00:00Z");
+  const decisions = useMemo(() => {
+    if (sample) {
+      return buildDecisionRows({
+        quotes: Object.entries(sampleQuotesBySymbol()).map(([symbol, quote]) => ({ symbol, ...quote })),
+        views: SAMPLE.rows,
+        fundamentals: sampleScreenerRows(),
+        holdings: sampleHoldings(),
+        holdingsKnown: true,
+        stress: sampleMarketStressRows().at(-1),
+        earningsBySymbol: bySymbol,
+        now: sampleNow,
+        today,
+      }).byTicker;
+    }
+    return buildDecisionRows({
+      quotes: live.quotes || [],
+      fundamentals: extra.fundamentals,
+      holdings: extra.holdings,
+      holdingsKnown: extra.holdingsKnown,
+      stress: extra.stress,
+      earningsBySymbol: bySymbol,
+      now: new Date(),
+      today,
+    }).byTicker;
+  }, [bySymbol, extra, live.quotes, sample, today]);
 
   if (sample) {
     const rows = assignRelativeStrengthRanks(SAMPLE.rows);
     return (
       <TechnicalAnalysisView
         rows={rows}
+        decisions={decisions}
         sample
         barDate={SAMPLE.barDate}
         spyClose={SAMPLE.spyClose}
         earningsBySymbol={bySymbol}
         today={today}
-        now={new Date("2026-10-30T17:00:00Z")}
+        now={sampleNow}
       />
     );
   }
@@ -235,6 +293,7 @@ export default function TechnicalAnalysis() {
       {!live.loading && !live.error && (
         <TechnicalAnalysisView
           rows={rows}
+          decisions={decisions}
           sample={false}
           barDate={dates.length === 1 ? dates[0] : null}
           barDatesMixed={dates.length > 1}

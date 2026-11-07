@@ -51,7 +51,7 @@ export function SellSignalsView({ book, sample, earningsUpdatedAt, drafts, savin
   const counts = book.counts;
   return (
     <div className="panel">
-      <h2>Sell Signals</h2>
+      <h2>Exit review</h2>
       {sample && (
         <div className="sample-banner">
           Sample book for preview. These are not your holdings. On the live site, sign in and this tab reads your Portfolio table.
@@ -279,30 +279,30 @@ export default function SellSignals() {
   }
 
   if (!ready) {
-    return <div className="panel"><h2>Sell Signals</h2><p>Loading…</p></div>;
+    return <div className="panel"><h2>Exit review</h2><p>Loading…</p></div>;
   }
 
   if (!session) {
     return (
       <div className="panel">
-        <h2>Sell Signals</h2>
-        <div className="empty">Sign in at the top of the page to see sell signals for your holdings.</div>
+        <h2>Exit review</h2>
+        <div className="empty">Sign in to see exit reviews for holdings. This is not evaluated while you are signed out, and it is not a sell rating for names you do not hold.</div>
       </div>
     );
   }
 
   if (error) {
-    return <div className="panel"><h2>Sell Signals</h2><p style={{ color: "var(--red)" }}>{error}</p></div>;
+    return <div className="panel"><h2>Exit review</h2><p style={{ color: "var(--red)" }}>{error}</p></div>;
   }
 
   if (!book) {
-    return <div className="panel"><h2>Sell Signals</h2><p>Loading…</p></div>;
+    return <div className="panel"><h2>Exit review</h2><p>Loading…</p></div>;
   }
 
   if (book.rows.length === 0) {
     return (
       <div className="panel">
-        <h2>Sell Signals</h2>
+        <h2>Exit review</h2>
         <div className="empty">No holdings yet. Add them on the Portfolio Allocation tab. This list is read from that table.</div>
       </div>
     );

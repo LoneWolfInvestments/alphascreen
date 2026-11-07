@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import "./styles.css";
 import Signals from "./components/Signals";
 import Mag7 from "./components/Mag7";
@@ -19,12 +19,25 @@ export default function App() {
     typeof window === "undefined" ? { view: "signals", section: null, symbol: null } : resolveRoute(window.location.search)
   ));
 
+  useEffect(() => {
+    const onPop = () => setRoute(resolveRoute(window.location.search));
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
   const go = (view, section) => {
     const params = new URLSearchParams();
     params.set("tab", view);
     if (section) params.set("section", section);
-    window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
-    setRoute({ view, section: section || null, symbol: null });
+    const next = `${window.location.pathname}?${params.toString()}`;
+    const current = `${window.location.pathname}${window.location.search}`;
+    const routeNext = { view, section: section || null, symbol: null };
+    if (next === current) {
+      setRoute((previous) => ({ ...routeNext, symbol: previous.symbol }));
+      return;
+    }
+    window.history.pushState({ view, section: section || null }, "", next);
+    setRoute(routeNext);
   };
 
   return (
@@ -47,7 +60,7 @@ export default function App() {
       </nav>
       <main>
         {route.view === "signals" ? (
-          <Signals symbol={route.symbol} onOpenSize={() => go("book", "size")} />
+          <Signals symbol={route.symbol} onOpenSize={() => go("book", "size")} onOpenNames={() => go("more", "fundamentals")} />
         ) : null}
         {route.view === "mag7" ? <Mag7 /> : null}
         {route.view === "book" ? <MyBook section={route.section} onSection={(section) => go("book", section)} /> : null}

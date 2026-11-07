@@ -312,7 +312,7 @@ function percentLevel(fraction) {
 }
 
 function earningsText(state, value) {
-  if (state === "available") return formatGrowth(value);
+  if (state === "available") return `Earnings growth ${formatGrowth(value)}.`;
   if (state === "non_positive") return "Earnings are zero or negative, so a growth rate is not used.";
   if (state === "turned_profitable") return "Earnings just turned positive, so a growth rate is not used.";
   if (state === "unstable") return "The earnings growth figure is too extreme to use. That usually means a tiny comparison base.";
@@ -452,9 +452,9 @@ export function readBusinessFundamentals(row, { now = new Date() } = {}) {
   } else if (!period && hasFigures) {
     bits.push("Finnhub did not include a statement date, so the figures are shown and not scored.");
   }
-  if (signal === "Buy") bits.push(`Business score ${score}. Revenue, earnings, margins, and the rough P/E check all clear the bar.`);
-  if (signal === "Hold") bits.push(`Business score ${score}. This is not a Buy. A missing piece, a high P/E, or mixed growth keeps it here.`);
-  if (signal === "Caution") bits.push(`Business score ${score}. Revenue is shrinking, earnings are negative, or margins are compressing.`);
+  if (signal === "Buy") bits.push("Revenue, earnings, margins, and the rough P/E check all clear the company bar.");
+  if (signal === "Hold") bits.push("Company figures are mixed. A missing piece, a high P/E, or uneven growth keeps them from clearing the company bar.");
+  if (signal === "Caution") bits.push("Revenue is shrinking, earnings are negative, or margins are compressing.");
   if (revenue != null) bits.push(`Revenue growth ${formatGrowth(revenue)}.`);
   if (resolvedEarningsState !== "missing") bits.push(earningsText(resolvedEarningsState, earningsValue));
 
