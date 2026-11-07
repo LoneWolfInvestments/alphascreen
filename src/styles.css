@@ -28,6 +28,9 @@ nav button.active { color: var(--accent); border-bottom-color: var(--accent); }
 tr.selected-row { background: #4f8dfd14; }
 .signal-cards { display: none; }
 .signal-card { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; width: 100%; text-align: left; background: var(--panel-alt); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-bottom: 8px; cursor: pointer; }
+.detail-card { background: var(--panel-alt); border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin: 8px 0; }
+.detail-card p { margin: 4px 0; }
+caption { caption-side: bottom; text-align: left; padding-top: 8px; }
 @media (max-width: 700px) {
   .signal-cards { display: block; }
   .signal-table { display: none; }
