@@ -1,32 +1,23 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 import { ownerMutationFailed } from "../lib/ownerMutation";
+import { useOwnerSession } from "../hooks/useOwnerSession";
 import { earningsDateFor, useEarningsMap } from "../hooks/useEarningsMap";
 import { previewSample } from "../lib/previewSample";
 import { isEarningsSoon, nyToday, formatDay } from "../lib/sellSignals";
-import { sampleScreenerRows } from "../lib/sellSignalsSample";
+import { sampleHoldings, sampleQuotesBySymbol, sampleScreenerRows } from "../lib/sellSignalsSample";
+import { buildSwingSample } from "../lib/swingSample";
+import { sampleMarketStressRows } from "../lib/marketStressSample";
 import {
   formatGrowth,
   readAnalyst,
   readBusinessFundamentals,
   readOwnership,
 } from "../lib/businessFundamentals";
+import { buildDecisionRows } from "../lib/decisionBook";
+import { assessmentOrder } from "../lib/signalAssessment";
 import { TIMING_NOTE } from "../lib/sessionClock";
 import EarningsDate from "./EarningsDate";
-
-function signalBadge(signal) {
-  if (signal === "Buy") return { label: "Buy", color: "#3ecf8e" };
-  if (signal === "Caution") return { label: "Caution", color: "#f0555a" };
-  if (signal === "Hold") return { label: "Hold", color: "#f0b955" };
-  return null;
-}
-
-function coverageBadge(read) {
-  if (read.coverage === "ready") return null;
-  if (read.coverage === "stale") return { label: "Not current", color: "#f0b955" };
-  if (read.coverage === "partial") return { label: "Partial", color: "#8b93a7" };
-  return { label: "No score", color: "#8b93a7" };
-}
 
 function fetchedLabel(value) {
   if (!value) return "Not downloaded yet";
@@ -42,7 +33,8 @@ function BusinessTable({ rows, earningsBySymbol, today }) {
         <thead>
           <tr>
             <th>Ticker</th>
-            <th>Read</th>
+            <th>Decision</th>
+            <th>Company evidence</th>
             <th>Revenue</th>
             <th>Earnings</th>
             <th>Margin trend</th>
@@ -55,7 +47,7 @@ function BusinessTable({ rows, earningsBySymbol, today }) {
         <tbody>
           {rows.map((row) => {
             const read = row.read;
-            const badge = signalBadge(read.signal) || coverageBadge(read);
+            const decision = row.decision;
             const earningsDate = earningsDateFor(earningsBySymbol, row.ticker, row.next_earnings_date);
             const soon = isEarningsSoon(earningsDate, today);
             return (
@@ -65,7 +57,12 @@ function BusinessTable({ rows, earningsBySymbol, today }) {
                   <div className="sync-note"><EarningsDate date={earningsDate} today={today} /></div>
                 </td>
                 <td>
-                  {badge ? <span className="badge" style={{ background: `${badge.color}26`, color: badge.color }}>{badge.label}{read.score != null ? ` ${read.score}` : ""}</span> : "—"}
+                  <strong>{decision ? decision.assessment : "Loading"}</strong>
+                  {decision ? <div className="sync-note wrap-note">{decision.reason}</div> : null}
+                </td>
+                <td>
+                  <div>{decision ? decision.fundamentals : "Unknown"}</div>
+                  {read.score != null ? <div className="sync-note">Company research figure {read.score}. Not the decision.</div> : null}
                   <div className="sync-note wrap-note">{read.summary}</div>
                 </td>
                 <td className="wrap">{read.revenue.text}</td>
@@ -123,14 +120,27 @@ function OwnershipTable({ rows }) {
 
 export default function FundamentalScreener() {
   const sample = previewSample();
+  const { ready, session } = useOwnerSession();
   const { bySymbol } = useEarningsMap();
-  const today = nyToday();
+  const today = sample ? "2026-10-30" : nyToday();
   const [rows, setRows] = useState([]);
+  const [context, setContext] = useState({ quotes: [], stress: null, holdings: [], holdingsKnown: false });
   const [ticker, setTicker] = useState("");
 
-  const load = useCallback(async () => {
-    const { data } = await supabase.from("fundamental_scores").select("*").order("ticker");
-    setRows(data || []);
+  const load = useCallback(async (userId) => {
+    const [scores, quotes, stress, portfolio] = await Promise.all([
+      supabase.from("fundamental_scores").select("*").order("ticker"),
+      supabase.from("quotes").select("symbol, price, setup_label, suggested_stop, chandelier_stop, bar_date, rs_3m, rs_6m, rs_12m, rs_composite"),
+      supabase.from("market_stress").select("*").order("as_of", { ascending: false }).limit(1),
+      userId ? supabase.from("portfolio").select("ticker, shares, cost_basis, theme") : Promise.resolve({ data: [], error: null }),
+    ]);
+    setRows(scores.data || []);
+    setContext({
+      quotes: quotes.data || [],
+      stress: stress.error ? null : (stress.data || [])[0] || null,
+      holdings: portfolio.error ? [] : (portfolio.data || []),
+      holdingsKnown: Boolean(userId) && !portfolio.error,
+    });
   }, []);
 
   useEffect(() => {
@@ -138,13 +148,16 @@ export default function FundamentalScreener() {
       setRows(sampleScreenerRows());
       return undefined;
     }
-    load();
+    if (!ready) return undefined;
+    const userId = session?.user?.id || null;
+    setContext({ quotes: [], stress: null, holdings: [], holdingsKnown: false });
+    load(userId);
     const channel = supabase
       .channel("fundamental-changes")
-      .on("postgres_changes", { event: "*", schema: "public", table: "fundamental_scores" }, load)
+      .on("postgres_changes", { event: "*", schema: "public", table: "fundamental_scores" }, () => load(userId))
       .subscribe();
     return () => supabase.removeChannel(channel);
-  }, [load, sample]);
+  }, [load, ready, sample, session?.user?.id]);
 
   const addTicker = async () => {
     if (!ticker.trim()) return;
@@ -160,17 +173,43 @@ export default function FundamentalScreener() {
     await ownerMutationFailed(supabase.from("fundamental_scores").delete().eq("ticker", symbol));
   };
 
-  const now = new Date();
+  const now = sample ? new Date("2026-10-30T17:00:00Z") : new Date();
+  const decisions = useMemo(() => {
+    if (sample) {
+      const swing = buildSwingSample();
+      return buildDecisionRows({
+        quotes: Object.entries(sampleQuotesBySymbol()).map(([symbol, quote]) => ({ symbol, ...quote })),
+        views: swing.rows,
+        fundamentals: rows,
+        holdings: sampleHoldings(),
+        holdingsKnown: true,
+        stress: sampleMarketStressRows().at(-1),
+        earningsBySymbol: bySymbol,
+        now,
+        today,
+      });
+    }
+    return buildDecisionRows({
+      quotes: context.quotes,
+      fundamentals: rows,
+      holdings: context.holdings,
+      holdingsKnown: context.holdingsKnown,
+      stress: context.stress,
+      earningsBySymbol: bySymbol,
+      now,
+      today,
+    });
+  }, [bySymbol, context.holdings, context.holdingsKnown, context.quotes, context.stress, now, rows, sample, today]);
   const prepared = rows.map((row) => ({
     ...row,
     read: readBusinessFundamentals(row, { now }),
+    decision: decisions.byTicker.get(row.ticker) || null,
     ownership: readOwnership(row),
     analyst: readAnalyst(row),
     onRemove: () => removeRow(row.ticker),
   })).sort((a, b) => {
-    const as = a.read.score == null ? -1 : a.read.score;
-    const bs = b.read.score == null ? -1 : b.read.score;
-    if (as !== bs) return bs - as;
+    const order = assessmentOrder(a.decision?.assessment) - assessmentOrder(b.decision?.assessment);
+    if (order !== 0) return order;
     return String(a.ticker).localeCompare(String(b.ticker));
   });
 
@@ -191,7 +230,7 @@ export default function FundamentalScreener() {
 
       <h3>Business fundamentals</h3>
       <p className="sync-note" style={{ marginBottom: 8 }}>
-        Revenue and earnings growth, the margin trend, and a rough P/E check. The score needs a statement date and a download from the last 45 days. A high P/E, negative earnings, or a shrinking top line blocks a Buy. Price to sales is shown only as context. A blank growth rate is missing, not zero.
+        The decision is the same one as Signals. Company evidence can be positive while the decision is Avoid. The research figure is not that decision and is not added to the other columns. A blank growth rate is missing, not zero.
       </p>
       {prepared.length > 0 ? (
         <BusinessTable rows={prepared} earningsBySymbol={bySymbol} today={today} />

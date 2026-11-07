@@ -3,8 +3,7 @@ import React from "react";
 export function HealthBanner({ health }) {
   if (!health) return null;
   return (
-    <div className="panel">
-      <h2>Data status</h2>
+    <div>
       <ul className="plain-list">
         {health.lines.map((line) => <li key={line}>{line}</li>)}
       </ul>

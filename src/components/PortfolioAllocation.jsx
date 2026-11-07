@@ -23,6 +23,11 @@ export default function PortfolioAllocation() {
 
   useEffect(() => {
     if (!ready) return undefined;
+    if (!session?.user) {
+      setRows([]);
+      setQuotes([]);
+      return undefined;
+    }
     load();
     const c1 = supabase.channel("portfolio-changes").on("postgres_changes", { event: "*", schema: "public", table: "portfolio" }, load).subscribe();
     const c2 = supabase.channel("portfolio-quotes").on("postgres_changes", { event: "*", schema: "public", table: "quotes" }, load).subscribe();
@@ -93,6 +98,29 @@ export default function PortfolioAllocation() {
 
   const fmt = (n) => (n == null ? "—" : Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 }));
   const fmtUsd = (n) => (n == null ? "—" : `$${Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}`);
+
+  if (!ready) {
+    return <div className="panel"><h2>Portfolio Allocation</h2><p>Loading…</p></div>;
+  }
+  if (!session?.user) {
+    return <div className="panel"><h2>Portfolio Allocation</h2><p>Sign in to see holdings. An empty list here is not a zero-value portfolio.</p></div>;
+  }
+  if (rows.length === 0) {
+    return (
+      <div className="panel">
+        <h2>Portfolio Allocation</h2>
+        <p>No holdings are saved.</p>
+        <div className="add-form">
+          <div className="field"><label>Ticker</label><input value={form.ticker} onChange={(e) => setForm({ ...form, ticker: e.target.value })} /></div>
+          <div className="field"><label>Sector</label><input value={form.sector} onChange={(e) => setForm({ ...form, sector: e.target.value })} /></div>
+          <div className="field"><label>Shares</label><input type="number" step="0.0001" value={form.shares} onChange={(e) => setForm({ ...form, shares: e.target.value })} /></div>
+          <div className="field"><label>Avg Cost Basis</label><input type="number" step="0.01" value={form.cost_basis} onChange={(e) => setForm({ ...form, cost_basis: e.target.value })} /></div>
+          <div className="field"><label>Conviction 1-5</label><input type="number" min="1" max="5" value={form.conviction} onChange={(e) => setForm({ ...form, conviction: e.target.value })} /></div>
+          <button className="action" onClick={addRow}>Add / Update</button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="panel">

@@ -2,20 +2,17 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 import { previewSample } from "../lib/previewSample";
 import { useOwnerSession } from "../hooks/useOwnerSession";
-import { earningsDateFor, useEarningsMap } from "../hooks/useEarningsMap";
-import { buildSellBook, isEarningsSoon, nyToday } from "../lib/sellSignals";
+import { useEarningsMap } from "../hooks/useEarningsMap";
+import { nyToday } from "../lib/sellSignals";
 import { sampleHoldings, sampleQuotesBySymbol, sampleScreenerRows } from "../lib/sellSignalsSample";
 import { buildSwingSample } from "../lib/swingSample";
-import { BENCHMARK_SYMBOL, assignRelativeStrengthRanks, viewRowFromQuote } from "../lib/swingSetups";
-import { readBusinessFundamentals } from "../lib/businessFundamentals";
-import { presentRegime } from "../lib/marketStress";
 import { sampleMarketStressRows } from "../lib/marketStressSample";
-import { sessionsBehind } from "../lib/sessionClock";
+import { buildDecisionRows } from "../lib/decisionBook";
+import { holdingsAccess } from "../lib/holdingsAccess";
 import {
   FILTERS,
-  assessmentOrder,
-  assessSignal,
   matchesFilter,
+  whatWouldChange,
 } from "../lib/signalAssessment";
 
 const SAMPLE_CLOCK = new Date("2026-10-30T17:00:00Z");
@@ -44,10 +41,12 @@ function EvidenceList({ title, items, empty }) {
 export function SignalsView({
   rows,
   regimeLine,
+  priceLines = [],
   sample,
-  heldNote,
+  holdingsStatus = "known",
   symbol,
   onOpenSize,
+  onOpenNames,
 }) {
   const [filter, setFilter] = useState("all");
   const [selected, setSelected] = useState(symbol || "");
@@ -71,9 +70,15 @@ export function SignalsView({
       {sample ? <div className="sample-banner">Sample prices for layout preview. Not your account and not a live signal.</div> : null}
       <p className="disclaimer" style={{ marginTop: 0, marginBottom: 12, borderTop: "none", paddingTop: 0 }}>
         The label is the overall read. Fundamentals, technicals, and supporting context are shown separately. They are not added into a score. Prices are the daily close. Company reports lag. Nothing here places an order.
+        {priceLines.length ? ` ${priceLines.join(" ")}` : ""}
         {regimeLine ? ` ${regimeLine}` : ""}
-        {heldNote ? ` ${heldNote}` : ""}
+        {holdingsStatus === "private" ? " Sign in to include names you hold. Exit review is not evaluated until then." : ""}
+        {holdingsStatus === "error" ? " Holdings could not be read, so exit review is not evaluated." : ""}
+        {holdingsStatus === "empty" ? " No holdings are saved, so there is no exit review." : ""}
       </p>
+      {onOpenNames ? (
+        <p className="sync-note"><button type="button" className="link-btn" onClick={onOpenNames}>Add or remove a name</button></p>
+      ) : null}
       <div className="subnav" role="toolbar" aria-label="Filter by overall label">
         {FILTERS.map((item) => (
           <button
@@ -81,9 +86,12 @@ export function SignalsView({
             type="button"
             className={filter === item.id ? "active" : ""}
             aria-pressed={filter === item.id}
+            disabled={item.id === "sell" && holdingsStatus !== "known" && holdingsStatus !== "empty"}
             onClick={() => setFilter(item.id)}
           >
-            {item.label} ({counts[item.id]})
+            {item.id === "sell" && holdingsStatus !== "known" && holdingsStatus !== "empty"
+              ? "Exit (not evaluated)"
+              : `${item.label} (${counts[item.id]})`}
           </button>
         ))}
       </div>
@@ -157,6 +165,7 @@ export function SignalsView({
           <h3>{current.ticker}</h3>
           <p><span className={toneClass(current.assessment)}>{current.assessment}</span></p>
           <p>{current.reason}</p>
+          <p>{whatWouldChange(current)}</p>
           <p>{current.trigger}</p>
           <p>{current.invalidation}</p>
           <div className="grid-2">
@@ -173,159 +182,98 @@ export function SignalsView({
   );
 }
 
-function compareRows(a, b) {
-  const order = assessmentOrder(a.assessment) - assessmentOrder(b.assessment);
-  if (order !== 0) return order;
-  const ar = Number.isFinite(a.rsRank) ? a.rsRank : 9999;
-  const br = Number.isFinite(b.rsRank) ? b.rsRank : 9999;
-  if (ar !== br) return ar - br;
-  return String(a.ticker).localeCompare(String(b.ticker));
-}
-
-export default function Signals({ symbol, onOpenSize }) {
+export default function Signals({ symbol, onOpenSize, onOpenNames }) {
   const sample = previewSample();
   const { ready, session } = useOwnerSession();
   const earnings = useEarningsMap();
-  const [quotes, setQuotes] = useState([]);
-  const [fundamentals, setFundamentals] = useState([]);
-  const [portfolio, setPortfolio] = useState([]);
-  const [heldNote, setHeldNote] = useState("");
-  const [stress, setStress] = useState(null);
-  const [loading, setLoading] = useState(!sample);
+  const signedIn = Boolean(session?.user);
+  const [pack, setPack] = useState({
+    userId: null,
+    pending: !sample,
+    quotes: [],
+    fundamentals: [],
+    holdings: [],
+    holdingsError: null,
+    stress: null,
+  });
 
-  const load = useCallback(async () => {
-    if (sample) return;
+  const load = useCallback(async (userId) => {
     const [quoteResult, fundamentalResult, portfolioResult, stressResult] = await Promise.all([
       supabase.from("quotes").select("symbol, price, rsi, sma_50, chandelier_stop, setup_label, setup_reason, suggested_stop, risk_pct, rs_3m, rs_6m, rs_12m, rs_composite, bar_date, updated_at"),
       supabase.from("fundamental_scores").select("*"),
-      supabase.from("portfolio").select("ticker, shares, cost_basis, theme"),
+      userId
+        ? supabase.from("portfolio").select("ticker, shares, cost_basis, theme")
+        : Promise.resolve({ data: [], error: null }),
       supabase.from("market_stress").select("*").order("as_of", { ascending: false }).limit(1),
     ]);
-    setQuotes(quoteResult.data || []);
-    setFundamentals(fundamentalResult.data || []);
-    if (portfolioResult.error) {
-      setPortfolio([]);
-      setHeldNote("Sign in to mark names you already hold. Exit review only appears for those holdings.");
-    } else {
-      setPortfolio(portfolioResult.data || []);
-      setHeldNote("");
-    }
-    setStress(stressResult.error ? null : (stressResult.data || [])[0] || null);
-    setLoading(false);
-  }, [sample]);
+    return {
+      userId,
+      pending: false,
+      quotes: quoteResult.data || [],
+      fundamentals: fundamentalResult.data || [],
+      holdings: portfolioResult.error ? [] : (portfolioResult.data || []),
+      holdingsError: portfolioResult.error || null,
+      stress: stressResult.error ? null : (stressResult.data || [])[0] || null,
+    };
+  }, []);
 
   useEffect(() => {
     if (sample || !ready) return undefined;
-    load();
-    return undefined;
+    const userId = session?.user?.id || null;
+    let cancelled = false;
+    setPack({
+      userId,
+      pending: true,
+      quotes: [],
+      fundamentals: [],
+      holdings: [],
+      holdingsError: null,
+      stress: null,
+    });
+    load(userId).then((next) => {
+      if (!cancelled) setPack(next);
+    });
+    return () => { cancelled = true; };
   }, [load, ready, sample, session?.user?.id]);
 
   const today = sample ? "2026-10-30" : nyToday();
+  const access = holdingsAccess({
+    ready: sample || ready,
+    signedIn: sample || signedIn,
+    pending: sample ? false : !ready || (signedIn && (pack.pending || pack.userId !== session?.user?.id)),
+    error: pack.userId === session?.user?.id ? pack.holdingsError : null,
+    count: sample ? sampleHoldings().length : (pack.userId === session?.user?.id ? pack.holdings.length : 0),
+  });
   const model = useMemo(() => {
     const now = sample ? SAMPLE_CLOCK : new Date();
     if (sample) {
       const swing = buildSwingSample();
-      const holdings = sampleHoldings();
       const quoteMap = sampleQuotesBySymbol();
-      const book = buildSellBook({
-        holdings,
-        quotesBySymbol: quoteMap,
-        earningsBySymbol: {},
-        today,
+      return buildDecisionRows({
+        quotes: Object.entries(quoteMap).map(([symbolName, quote]) => ({ symbol: symbolName, ...quote })),
+        views: swing.rows,
+        fundamentals: sampleScreenerRows(),
+        holdings: sampleHoldings(),
+        holdingsKnown: true,
+        stress: sampleMarketStressRows().at(-1),
+        earningsBySymbol: earnings.bySymbol,
         now,
+        today,
       });
-      const exitByTicker = new Map(book.rows.map((row) => [row.ticker, row.status]));
-      const businessByTicker = new Map(sampleScreenerRows().map((row) => [row.ticker, readBusinessFundamentals(row, { now })]));
-      const regime = presentRegime(sampleMarketStressRows().at(-1), now);
-      const heldNames = new Set(holdings.map((row) => row.ticker));
-      const ranked = assignRelativeStrengthRanks(swing.rows);
-      const rows = ranked
-        .filter((row) => row.symbol !== BENCHMARK_SYMBOL)
-        .map((row) => assessSignal({
-          ticker: row.symbol,
-          held: heldNames.has(row.symbol),
-          label: row.label,
-          freshness: "fresh",
-          barDate: swing.barDate,
-          stop: row.stop,
-          exitStop: quoteMap[row.symbol]?.chandelier_stop,
-          exitStatus: exitByTicker.get(row.symbol) || null,
-          rsRank: row.rsRank,
-          rsCount: row.rsCount,
-          businessCoverage: businessByTicker.get(row.symbol)?.coverage || "missing",
-          businessSignal: businessByTicker.get(row.symbol)?.signal || null,
-          businessSummary: businessByTicker.get(row.symbol)?.summary || null,
-          statementPeriod: businessByTicker.get(row.symbol)?.period || null,
-          earningsSoon: isEarningsSoon(earningsDateFor(earnings.bySymbol, row.symbol, null), today),
-          earningsDate: earningsDateFor(earnings.bySymbol, row.symbol, null),
-          regimeState: regime.state,
-          regime: regime.regime,
-          regimeAsOf: regime.asOf,
-        }))
-        .sort(compareRows);
-      return {
-        rows,
-        regimeLine: regime.state === "fresh"
-          ? `Market light is ${regime.regime} for ${regime.asOf}. It does not confirm a stock.`
-          : "Market light is not a current reading.",
-      };
     }
-
-    const regime = presentRegime(stress, now);
-    const businessByTicker = new Map((fundamentals || []).map((row) => [row.ticker, readBusinessFundamentals(row, { now })]));
-    const quoteBySymbol = new Map((quotes || []).map((row) => [row.symbol, row]));
-    const book = buildSellBook({
-      holdings: portfolio,
-      quotesBySymbol: Object.fromEntries((quotes || []).map((row) => [row.symbol, row])),
-      earningsBySymbol: {},
-      today,
+    return buildDecisionRows({
+      quotes: pack.quotes,
+      fundamentals: pack.fundamentals,
+      holdings: access.status === "ready" || access.status === "empty" ? pack.holdings : [],
+      holdingsKnown: access.status === "ready" || access.status === "empty",
+      stress: pack.stress,
+      earningsBySymbol: earnings.bySymbol,
       now,
+      today,
     });
-    const exitByTicker = new Map(book.rows.map((row) => [row.ticker, row.status]));
-    const heldNames = new Set((portfolio || []).map((row) => row.ticker));
-    const ranked = assignRelativeStrengthRanks((quotes || []).map(viewRowFromQuote).filter(Boolean));
-    const symbols = new Set([
-      ...ranked.map((row) => row.symbol),
-      ...businessByTicker.keys(),
-      ...heldNames,
-    ]);
-    symbols.delete(BENCHMARK_SYMBOL);
-    const rows = [...symbols].map((ticker) => {
-      const view = ranked.find((row) => row.symbol === ticker);
-      const quote = quoteBySymbol.get(ticker);
-      const business = businessByTicker.get(ticker);
-      const info = sessionsBehind(quote?.bar_date, now);
-      return assessSignal({
-        ticker,
-        held: heldNames.has(ticker),
-        label: view?.label || null,
-        freshness: quote ? info.state : "missing",
-        barDate: quote?.bar_date ? String(quote.bar_date).slice(0, 10) : null,
-        stop: view?.stop,
-        exitStop: quote?.chandelier_stop,
-        exitStatus: exitByTicker.get(ticker) || null,
-        rsRank: view?.rsRank,
-        rsCount: view?.rsCount,
-        businessCoverage: business?.coverage || "missing",
-        businessSignal: business?.signal || null,
-        businessSummary: business?.summary || null,
-        statementPeriod: business?.period || null,
-        earningsSoon: isEarningsSoon(earningsDateFor(earnings.bySymbol, ticker, null), today),
-        earningsDate: earningsDateFor(earnings.bySymbol, ticker, null),
-        regimeState: regime.state,
-        regime: regime.regime,
-        regimeAsOf: regime.asOf,
-      });
-    }).sort(compareRows);
-    return {
-      rows,
-      regimeLine: regime.state === "fresh"
-        ? `Market light is ${regime.regime} for ${regime.asOf}. It does not confirm a stock.`
-        : "Market light is not a current reading.",
-    };
-  }, [earnings.bySymbol, fundamentals, portfolio, quotes, sample, stress, today]);
+  }, [access.status, earnings.bySymbol, pack.fundamentals, pack.holdings, pack.quotes, pack.stress, sample, today]);
 
-  if (!sample && (!ready || loading)) {
+  if (!sample && (!ready || pack.pending || (signedIn && pack.userId !== session?.user?.id))) {
     return <div className="panel"><h2>Signals</h2><p>Loading…</p></div>;
   }
 
@@ -333,10 +281,12 @@ export default function Signals({ symbol, onOpenSize }) {
     <SignalsView
       rows={model.rows}
       regimeLine={model.regimeLine}
+      priceLines={model.priceSummary.lines}
       sample={sample}
-      heldNote={heldNote}
+      holdingsStatus={access.status === "ready" ? "known" : access.status}
       symbol={symbol}
       onOpenSize={onOpenSize}
+      onOpenNames={onOpenNames}
     />
   );
 }

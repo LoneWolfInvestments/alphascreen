@@ -192,6 +192,17 @@ export function assessSignal(row = {}) {
   };
 }
 
+export function whatWouldChange(row = {}) {
+  if (row.assessment === ASSESSMENT.DATA) return "A decision needs a current price session and a saved setup. A missing or stale price is not a buy or a sell.";
+  if (row.assessment === ASSESSMENT.EXIT) return "This is an exit review because you hold it and the trailing exit stop is through. It is not the label for an unheld name.";
+  if (row.assessment === ASSESSMENT.AVOID) return "A long would need the trend gate to open. Positive company figures do not override a closed trend, and this is not a short.";
+  if (row.assessment === ASSESSMENT.BUY) return "It stops being a buy candidate if earnings move inside five sessions, the company figures no longer pass, or the price session goes stale. A red market light is a warning, not that change.";
+  if (row.fundamentals === PILLAR.UNKNOWN) return "Company figures would need a current snapshot before this can be a buy candidate. Unknown is not a yes.";
+  if (row.earningsSoon) return "The earnings window would need to pass before a new entry. That does not by itself sell a holding.";
+  if (row.technicals === PILLAR.MIXED) return "The trend is open. A buy candidate still needs a breakout or a pullback, plus company figures that pass.";
+  return "The decision stays wait until the blocking evidence changes. The columns are not added into a score.";
+}
+
 export function assessmentOrder(assessment) {
   if (assessment === ASSESSMENT.BUY) return 0;
   if (assessment === ASSESSMENT.EXIT) return 1;

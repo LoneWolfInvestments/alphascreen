@@ -17,15 +17,7 @@ export function summarizeHealth({
   jobHistory = null,
   now = new Date(),
 } = {}) {
-  const prices = { fresh: 0, delayed: 0, stale: 0, missing: 0, ahead: 0, total: 0 };
-  let newest = null;
-  for (const quote of quotes || []) {
-    prices.total += 1;
-    const info = sessionsBehind(quote?.bar_date, now);
-    prices[info.state] = (prices[info.state] || 0) + 1;
-    const bar = day(quote?.bar_date);
-    if (bar && (!newest || bar > newest)) newest = bar;
-  }
+  const prices = priceSessionSummary(quotes, now);
 
   let fundamentalsReady = 0;
   let fundamentalsStale = 0;
@@ -49,12 +41,7 @@ export function summarizeHealth({
     tone = "unknown";
   }
 
-  const lines = [];
-  if (prices.total === 0) lines.push("No saved price sessions yet.");
-  else lines.push(`Prices: ${prices.fresh} of ${prices.total} names are on the latest completed session${newest ? ` (newest saved session ${newest})` : ""}.`);
-  if (prices.delayed || prices.stale || prices.missing || prices.ahead) {
-    lines.push(`Other price sessions: ${prices.delayed} one day behind, ${prices.stale} older, ${prices.missing} with no date.`);
-  }
+  const lines = [...prices.lines];
   lines.push(`Company snapshots: ${fundamentalsReady} current, ${fundamentalsStale} stale, ${fundamentalsOther} missing or incomplete, out of ${(fundamentals || []).length}.`);
   if (regime.state === "missing") lines.push("Market light: no saved reading. That is not a calm market and not a stressed market.");
   else if (regime.state === "fresh") lines.push(`Market light: ${regime.regime} for session ${regime.asOf}.`);
@@ -69,7 +56,7 @@ export function summarizeHealth({
     stressGap,
     jobGaps,
     prices,
-    newestPriceSession: newest,
+    newestPriceSession: prices.newest,
     fundamentalsReady,
     fundamentalsStale,
     fundamentalsOther,
@@ -79,6 +66,24 @@ export function summarizeHealth({
     failedJobs: jobs.problemCount,
     lines,
   };
+}
+
+export function priceSessionSummary(quotes, now = new Date()) {
+  const prices = { fresh: 0, delayed: 0, stale: 0, missing: 0, ahead: 0, total: 0, newest: null };
+  for (const quote of quotes || []) {
+    prices.total += 1;
+    const info = sessionsBehind(quote?.bar_date, now);
+    prices[info.state] = (prices[info.state] || 0) + 1;
+    const bar = day(quote?.bar_date);
+    if (bar && (!prices.newest || bar > prices.newest)) prices.newest = bar;
+  }
+  const lines = [];
+  if (prices.total === 0) lines.push("No saved price sessions yet.");
+  else lines.push(`Prices: ${prices.fresh} of ${prices.total} names are on the latest completed session${prices.newest ? ` (newest saved session ${prices.newest})` : ""}.`);
+  if (prices.delayed || prices.stale || prices.missing || prices.ahead) {
+    lines.push(`Other price sessions: ${prices.delayed} one day behind, ${prices.stale} older, ${prices.missing} with no date.`);
+  }
+  return { ...prices, lines };
 }
 
 function statusCounts(rows) {

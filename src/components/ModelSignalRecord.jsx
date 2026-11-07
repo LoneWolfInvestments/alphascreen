@@ -90,15 +90,19 @@ export default function ModelSignalRecord({ sample = previewSample(), notes = nu
       {notice ? <p>{notice}</p> : null}
       {rows ? (
         <>
-          <p>
-            Wins {summary.counts.win}. Losses {summary.counts.loss}. Win rate {summary.winRate == null ? "—" : `${(summary.winRate * 100).toFixed(0)}%`} of {summary.denominator} finished win-or-loss results.
-            {" "}Still untriggered {summary.counts.untriggered}. Open {summary.counts.open}. Expired {summary.counts.expired}. Ambiguous {summary.counts.ambiguous}. Data insufficient {summary.counts.data_insufficient}.
-          </p>
-          <p className="sync-note">
-            {summary.withheld
-              ? `Average R is withheld until there are ${summary.minClosed} wins and losses. There are ${summary.denominator}. Pending names stay in the counts above and out of the average.`
-              : `Average R ${rText(summary.avgR)}. Average R after the 0.05% cost assumption ${rText(summary.avgRNet)}.`}
-          </p>
+          {rows.length > 0 ? (
+            <>
+              <p>
+                Wins {summary.counts.win}. Losses {summary.counts.loss}. Win rate {summary.winRate == null ? "—" : `${(summary.winRate * 100).toFixed(0)}%`} of {summary.denominator} finished win-or-loss results.
+                {" "}Still untriggered {summary.counts.untriggered}. Open {summary.counts.open}. Expired {summary.counts.expired}. Ambiguous {summary.counts.ambiguous}. Data insufficient {summary.counts.data_insufficient}.
+              </p>
+              <p className="sync-note">
+                {summary.withheld
+                  ? `Average R is withheld until there are ${summary.minClosed} wins and losses. There are ${summary.denominator}. Pending names stay in the counts above and out of the average.`
+                  : `Average R ${rText(summary.avgR)}. Average R after the 0.05% cost assumption ${rText(summary.avgRNet)}.`}
+              </p>
+            </>
+          ) : null}
           {overlaps.length ? (
             <p>Your journal has a note on {overlaps.map((item) => `${item.symbol} opened ${item.opened}`).join(", ")}. That note is not this result, and this result was not copied from the note.</p>
           ) : null}
